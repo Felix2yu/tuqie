@@ -3,3 +3,5 @@ bin/
 *.log
 .DS_Store
 web/dist/
+coverage.out
+coverage.html
