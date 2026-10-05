@@ -2,17 +2,19 @@
 
 # Frontend first: the Go binary embeds web/dist, so the static assets have to
 # exist before the compile step. Same order as ./build.sh.
-FROM node:24-alpine AS web
+FROM node:26-alpine AS web
 WORKDIR /src/web
 
 # Resolved before the sources are copied, because the lockfile changes far less
 # often than the code.
 COPY web/package.json web/pnpm-lock.yaml web/pnpm-workspace.yaml ./
 
-# Pinned to 12 rather than left to whatever image default: pnpm 11+ turns an
-# unapproved dependency build script into `pnpm install` exit 1, and the
-# `allowBuilds` key that approves esbuild only exists in pnpm 12.
-RUN npm install --global pnpm@12.8.1 && pnpm install --frozen-lockfile
+# pnpm's version comes from package.json's packageManager field, the same source
+# CI reads, so image / CI / local checkout cannot drift apart. Both pnpm 11.22.0
+# and 12.8.1 accept the `allowBuilds` key that approves esbuild's install script;
+# without it `pnpm install` exits 1 (ERR_PNPM_IGNORED_BUILDS).
+RUN npm install --global "pnpm@$(node -p 'require("./package.json").packageManager.split("@")[1].split("+")[0]')" \
+    && pnpm install --frozen-lockfile
 
 COPY web/ ./
 RUN pnpm build
