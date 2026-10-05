@@ -5,6 +5,9 @@
 
 Go 单二进制 + 内嵌前端，没有数据库，不需要外部服务。竖着往下拼和横着往右拼的长图都会自动判方向。
 
+![CI](https://github.com/Felix2yu/tuqie/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/Felix2yu/tuqie/graph/badge.svg)](https://codecov.io/gh/Felix2yu/tuqie)
+
 ## 跑起来
 
 ```sh
@@ -12,8 +15,10 @@ Go 单二进制 + 内嵌前端，没有数据库，不需要外部服务。竖�
 ./bin/tuqie         # 打开 http://localhost:7423
 ```
 
-`web/pnpm-workspace.yaml` 放行了 esbuild 的安装脚本；pnpm 11+ 对未批准的构建脚本
-会直接让 `pnpm install` 退出码 1。
+`web/pnpm-workspace.yaml` 里的 `allowBuilds: esbuild` 放行了 esbuild 的安装脚本；pnpm 11+
+会因未批准的构建脚本让 `pnpm install` 直接退出码 1（实测 pnpm 11.22.0 与 12.8.1 都认这个键，
+换成旧的 `onlyBuiltDependencies` 反而仍然退 1）。工具链版本只有一个来源：Node 读仓库根 `.nvmrc`，
+pnpm 读 `web/package.json` 的 `packageManager`，`build.sh`、`Dockerfile` 与 CI 都不各自写死。
 
 开发模式（前端热更新，`/api` 代理到 7423）：
 
@@ -41,6 +46,28 @@ docker run --rm tuqie -ttl 10m
 
 `/data` 里是上传的原图，`-ttl` 到期即删，用命名卷即可、不必备份；改成宿主目录 bind mount 时，
 要让容器里的非 root 用户 `tuqie` 对它可写。存相册那一步依然要求 HTTPS，见下一节。
+
+## CI 与覆盖率
+
+`.github/workflows/ci.yml` 只是薄调用层，构建 / 测试 / Codecov 上报的实现统一在
+`Felix2yu/.github` 的 `reusable-test.yml`（pin 到 `@v1`）。统一规范读各仓库自己的工具链声明，
+所以本仓库必须交齐三样：根目录 `.nvmrc`、`web/package.json` 的 `packageManager`、
+`web/pnpm-lock.yaml`，缺任何一样 CI 直接失败。
+
+覆盖率走 `go test -covermode=atomic -coverprofile=coverage.out ./...` 再交给 Codecov。
+接入时的实测：全部包 39.3%（detect 94.6%、split 88.2%、server 8.9%、store 0%）。
+闸门策略在 `codecov.yml`：project 看存量基线（`target: auto` + informational），
+patch 要求新增代码 80%。本地同样一条命令就能看总数：
+
+```sh
+go test -count=1 -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1
+```
+
+给 CI 加 `-race` 之前先看一眼 `ci.yml` 里那条注释：覆盖率插桩叠上 race 会让
+1080×21600 那次 `Analyze` 跑到 8.1s，顶爆检测测试的 3s 计时预算；单独 `-race` 是过的。
+
+Codecov 本身不参与闸门（上报失败不会让 CI 变红），但它需要先认到这个仓库：
+在 codecov.io 用 GitHub 账号添加 `Felix2yu/tuqie`，然后把 token 存进仓库 secrets。
 
 ## 存到 iOS 相册
 
@@ -98,6 +125,9 @@ internal/store   上传文件与解码缓存（TTL 回收）
 internal/server  HTTP 接口
 web/             React + Vite + Tailwind 前端，构建产物被 Go 内嵌
 tools/gensample  生成合成长图，用于手动测试（`-axis x` 出横排）
+Dockerfile       多阶段构建，产出同一个单二进制
+.github/workflows  CI，转调 Felix2yu/.github 的统一 reusable workflow
+codecov.yml      覆盖率闸门（规范统一，各仓库只改 paths）
 ```
 
 测试：`go test ./...`；前端类型检查与构建：`pnpm --dir web build`。
