@@ -25,6 +25,23 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 其他参数：`-addr :7423` 监听地址，`-data` 上传目录（默认 `$TMPDIR/tuqie`），
 `-ttl 60m` 原图保留时长。
 
+## 容器化部署
+
+```sh
+docker build -t tuqie .
+docker run -d --name tuqie -p 7423:7423 -v tuqie-data:/data tuqie
+```
+
+多阶段构建：node 阶段产出 `web/dist`，go 阶段把它内嵌进二进制，最后一层只有 alpine 加一个文件，
+跑的仍是上面那个单二进制，所以参数照旧往后传就行：
+
+```sh
+docker run --rm tuqie -ttl 10m
+```
+
+`/data` 里是上传的原图，`-ttl` 到期即删，用命名卷即可、不必备份；改成宿主目录 bind mount 时，
+要让容器里的非 root 用户 `tuqie` 对它可写。存相册那一步依然要求 HTTPS，见下一节。
+
 ## 存到 iOS 相册
 
 浏览器不能静默写相册，Web 上唯一的路径是系统分享面板：
