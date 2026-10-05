@@ -1,5 +1,6 @@
 {
   "name": "tuqie-web",
+  "packageManager": "pnpm@11.22.0",
   "private": true,
   "type": "module",
   "scripts": {
