@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: Felix2yu/.github/.github/workflows/reusable-test.yml@v1
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      go-dir: .
+      # 同一个 job 里前端先构建，web/dist 已经躺在 go:embed 的位置上，
+      # 所以连 main 包一起跑，而不只是 ./internal/...
+      test-packages: ./...
+      # 不加 -race：覆盖率插桩叠上 race 后，1080x21600 那次 Analyze 实测 8.095s，
+      # 直接顶爆 detect_test 里 3s 的计时预算（单开 -race 是 0.4s 级、通过）。
+      # 走默认的 -covermode=atomic：插桩后整包 4.2s，计时断言有余量。
+      web-dir: web
+      codecov-disable-search: true
