@@ -34,3 +34,31 @@ jobs:
       # 走默认的 -covermode=atomic：插桩后整包 4.2s，计时断言有余量。
       web-dir: web
       codecov-disable-search: true
+
+  image:
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    uses: Felix2yu/.github/.github/workflows/reusable-image.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/tuqie
+      binary-name: tuqie
+      image-name: ghcr.io/felix2yu/tuqie
+      # 零第三方依赖、CGO off：静态二进制，装配进 alpine（musl）运行镜像不会启动即崩
+      cgo: off
+      # go:embed 需要 web/dist；reusable 流程构建前端后就位在同一目录
+      web-dir: web
+
+  release:
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    uses: Felix2yu/.github/.github/workflows/reusable-release.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/tuqie
+      binary-name: tuqie
+      cgo: off
+      web-dir: web

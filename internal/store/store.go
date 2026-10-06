@@ -191,22 +191,28 @@ func (s *Store) reap() {
 		case <-s.stopCh:
 			return
 		case now := <-t.C:
-			s.mu.Lock()
-			for id, p := range s.items {
-				idle := p.idleFor(now)
-				switch {
-				case idle > s.ttl:
-					p.Release()
-					os.Remove(p.Path)
-					delete(s.items, id)
-					log.Printf("store: expired %s", id)
-				case idle > hotWindow:
-					p.Release()
-				}
-			}
-			s.mu.Unlock()
+			s.sweep(now)
 		}
 	}
+}
+
+// sweep drops uploads idle beyond the TTL and evicts the decoded pixels of
+// ones past the hot window.
+func (s *Store) sweep(now time.Time) {
+	s.mu.Lock()
+	for id, p := range s.items {
+		idle := p.idleFor(now)
+		switch {
+		case idle > s.ttl:
+			p.Release()
+			os.Remove(p.Path)
+			delete(s.items, id)
+			log.Printf("store: expired %s", id)
+		case idle > hotWindow:
+			p.Release()
+		}
+	}
+	s.mu.Unlock()
 }
 
 func readConfig(path string) (image.Config, string, error) {

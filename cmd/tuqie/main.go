@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,7 +22,13 @@ func main() {
 	addr := flag.String("addr", ":7423", "listen address")
 	dataDir := flag.String("data", "", "directory for uploads (default: $TMPDIR/tuqie)")
 	ttl := flag.Duration("ttl", 60*time.Minute, "how long uploads are kept")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("tuqie", version)
+		return
+	}
 
 	if err := run(*addr, *dataDir, *ttl); err != nil {
 		log.Fatal(err)

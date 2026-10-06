@@ -15,7 +15,7 @@ import (
 // the detector can compare the composition on either side of a candidate line.
 // Bands run top to bottom for axis.Y and left to right for axis.X.
 func stitched(width int, sizes []int, gap int, seed int64, ax axis.Axis) *image.RGBA {
-	total := len(sizes)*gap
+	total := len(sizes) * gap
 	for _, s := range sizes {
 		total += s
 	}

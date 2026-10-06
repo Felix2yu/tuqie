@@ -1,9 +1,4 @@
 .git
 .dockerignore
 Dockerfile
-bin/
 web/node_modules/
-web/dist/
-tools/
-*.log
-.DS_Store

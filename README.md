@@ -28,16 +28,20 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 ```
 
 其他参数：`-addr :7423` 监听地址，`-data` 上传目录（默认 `$TMPDIR/tuqie`），
-`-ttl 60m` 原图保留时长。
+`-ttl 60m` 原图保留时长，`-version` 打印版本号（CI 构建注入，本地为 `dev`）。
 
 ## 容器化部署
 
+镜像是装配式的：统一 CI（reusable-image）先编出 `bin/tuqie`，Dockerfile 只做运行时拼装，
+所以本地构建镜像前要先生成二进制：
+
 ```sh
+./build.sh
 docker build -t tuqie .
 docker run -d --name tuqie -p 7423:7423 -v tuqie-data:/data tuqie
 ```
 
-多阶段构建：node 阶段产出 `web/dist`，go 阶段把它内嵌进二进制，最后一层只有 alpine 加一个文件，
+CI 通过后会推到 `ghcr.io/felix2yu/tuqie`。二进制静态编译（CGO off），前端已内嵌，
 跑的仍是上面那个单二进制，所以参数照旧往后传就行：
 
 ```sh
@@ -54,8 +58,12 @@ docker run --rm tuqie -ttl 10m
 所以本仓库必须交齐三样：根目录 `.nvmrc`、`web/package.json` 的 `packageManager`、
 `web/pnpm-lock.yaml`，缺任何一样 CI 直接失败。
 
+test 通过后还有两个统一 job：`image`（reusable-image，静态编译 `bin/tuqie` 后装配进
+`ghcr.io/felix2yu/tuqie`）；`release`（reusable-release，发布 Release 时产出 5 平台二进制，
+以 `-ldflags "-X main.version=<tag>"` 注入版本号，供 `-version` 打印）。
+
 覆盖率走 `go test -covermode=atomic -coverprofile=coverage.out ./...` 再交给 Codecov。
-接入时的实测：全部包 39.3%（detect 94.6%、split 88.2%、server 8.9%、store 0%）。
+实测：全部包 75.1%（detect 94.6%、server 91.6%、store 90.2%、split 88.2%、axis 100%）。
 闸门策略在 `codecov.yml`：project 看存量基线（`target: auto` + informational），
 patch 要求新增代码 80%。本地同样一条命令就能看总数：
 
@@ -125,8 +133,8 @@ internal/store   上传文件与解码缓存（TTL 回收）
 internal/server  HTTP 接口
 web/             React + Vite + Tailwind 前端，构建产物被 Go 内嵌
 tools/gensample  生成合成长图，用于手动测试（`-axis x` 出横排）
-Dockerfile       多阶段构建，产出同一个单二进制
-.github/workflows  CI，转调 Felix2yu/.github 的统一 reusable workflow
+Dockerfile       装配式运行镜像（COPY CI 编好的 bin/tuqie）
+.github/workflows  CI，转调 Felix2yu/.github 的统一 reusable workflow（test / image / release）
 codecov.yml      覆盖率闸门（规范统一，各仓库只改 paths）
 ```
 
