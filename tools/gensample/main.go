@@ -7,58 +7,78 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"io"
+	"log"
 	"math/rand"
 	"os"
 )
 
+// options mirrors the command's flags so generation stays testable.
+type options struct {
+	out    string
+	width  int
+	photos int
+	gap    int
+	seed   int64
+	axis   string
+}
+
 func main() {
-	out := flag.String("out", "/tmp/tuqie-sample.png", "output path")
-	width := flag.Int("width", 1080, "image width")
-	photos := flag.Int("photos", 4, "how many photos are stitched together")
-	gap := flag.Int("gap", 18, "blank band between photos")
-	seed := flag.Int64("seed", 2026, "random seed")
-	axisFlag := flag.String("axis", "y", "stitch direction: y stacks downward, x runs left to right")
+	var opt options
+	flag.StringVar(&opt.out, "out", "/tmp/tuqie-sample.png", "output path")
+	flag.IntVar(&opt.width, "width", 1080, "image width")
+	flag.IntVar(&opt.photos, "photos", 4, "how many photos are stitched together")
+	flag.IntVar(&opt.gap, "gap", 18, "blank band between photos")
+	flag.Int64Var(&opt.seed, "seed", 2026, "random seed")
+	flag.StringVar(&opt.axis, "axis", "y", "stitch direction: y stacks downward, x runs left to right")
 	flag.Parse()
 
-	rng := rand.New(rand.NewSource(*seed))
-	heights := make([]int, *photos)
-	total := (*photos) * *gap
+	if err := generate(opt, os.Stdout); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func generate(opt options, report io.Writer) error {
+	rng := rand.New(rand.NewSource(opt.seed))
+	heights := make([]int, opt.photos)
+	total := opt.photos * opt.gap
 	for i := range heights {
 		heights[i] = 700 + rng.Intn(600)
 		total += heights[i]
 	}
 
-	img := image.NewRGBA(image.Rect(0, 0, *width, total))
+	img := image.NewRGBA(image.Rect(0, 0, opt.width, total))
 	y := 0
 	for _, h := range heights {
-		drawPhoto(img, *width, y, h, rng)
+		drawPhoto(img, opt.width, y, h, rng)
 		y += h
-		for dy := 0; dy < *gap; dy++ {
-			for x := 0; x < *width; x++ {
+		for dy := 0; dy < opt.gap; dy++ {
+			for x := 0; x < opt.width; x++ {
 				img.SetRGBA(x, y, color.RGBA{246, 246, 247, 255})
 			}
 			y++
 		}
 	}
 
-	horizontal := *axisFlag == "x"
+	horizontal := opt.axis == "x"
 	if horizontal {
 		img = transpose(img)
 	}
 
-	f, err := os.Create(*out)
+	f, err := os.Create(opt.out)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer f.Close()
 	if err := png.Encode(f, img); err != nil {
-		panic(err)
+		return err
 	}
-	w, h := *width, total
+	w, h := opt.width, total
 	if horizontal {
-		w, h = total, *width
+		w, h = total, opt.width
 	}
-	fmt.Printf("%s: %dx%d, %d photos, axis=%s, seams at %v\n", *out, w, h, *photos, *axisFlag, seams(heights, *gap))
+	fmt.Fprintf(report, "%s: %dx%d, %d photos, axis=%s, seams at %v\n", opt.out, w, h, opt.photos, opt.axis, seams(heights, opt.gap))
+	return nil
 }
 
 // transpose turns a vertical stack into a left-to-right one.
@@ -90,7 +110,7 @@ func drawPhoto(img *image.RGBA, width, top, height int, rng *rand.Rand) {
 		for x := 0; x < width; x++ {
 			// Per-pixel grain, so interior rows are as textured as a real photo
 			// instead of looking like flat padding.
-			grain := ((x*73856093)^(y*19349663)) % 44
+			grain := ((x * 73856093) ^ (y * 19349663)) % 44
 			sky := color.RGBA{
 				R: uint8(int(float64(base.R)*(1-t*0.6)) + x*8/width + grain),
 				G: uint8(int(float64(base.G)*(1-t*0.4)) + y*4/height + grain/2),
@@ -104,7 +124,8 @@ func drawPhoto(img *image.RGBA, width, top, height int, rng *rand.Rand) {
 	for i := 0; i < 4; i++ {
 		// Content stays inside its own photo; nothing paints over the padding.
 		cv := color.RGBA{uint8(rng.Intn(256)), uint8(rng.Intn(256)), uint8(rng.Intn(256)), 255}
-		circle(img, image.Rect(0, top, width, top+height), 60+rng.Intn(width-120), top+rng.Intn(height), 40+rng.Intn(80), cv)
+		r := min(40+rng.Intn(80), width/2)
+		circle(img, image.Rect(0, top, width, top+height), r+rng.Intn(max(1, width-2*r)), top+rng.Intn(height), r, cv)
 	}
 	for row := 0; row < 3; row++ {
 		bandY := top + 20 + row*40
