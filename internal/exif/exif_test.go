@@ -14,11 +14,13 @@ import (
 
 // ifdTag is one IFD record in the hand-built fixtures.
 type ifdTag struct {
-	tag   uint16
-	text  string // ASCII value; values that fit in 4 bytes go inline, as cameras write them
-	long  uint32 // LONG value, unless isRef
-	ref   int    // index of the IFD to point at when isRef
-	isRef bool
+	tag     uint16
+	text    string // ASCII value; values that fit in 4 bytes go inline, as cameras write them
+	long    uint32 // LONG value, unless isRef
+	short   uint16 // SHORT value when isShort
+	ref     int    // index of the IFD to point at when isRef
+	isRef   bool
+	isShort bool
 }
 
 // buildTIFF writes a header followed by the IFDs in order, chaining each to the
@@ -86,6 +88,12 @@ func buildTIFF(t *testing.T, order binary.ByteOrder, ifds ...[]ifdTag) []byte {
 				u16(typeLong)
 				u32(1)
 				u32(uint32(offs[e.ref]))
+			case e.isShort:
+				u16(typeShort)
+				u32(1)
+				b := make([]byte, 4)
+				order.PutUint16(b, e.short)
+				buf.Write(b)
 			default:
 				u16(typeLong)
 				u32(1)
@@ -471,6 +479,131 @@ func TestScanPNGeXIf(t *testing.T) {
 	headerEnd := 8 + len(ihdr.body) + 12 + 8 + len(exif.body)
 	if d := Scan(data[:headerEnd]); d.Valid() {
 		t.Fatal("PNG truncated inside the eXIf chunk accepted")
+	}
+}
+
+func TestRoundTripThroughPngChunk(t *testing.T) {
+	for _, src := range []Date{
+		{Wall: "2026:10:07 09:15:30"},
+		{Wall: "2026:10:07 09:15:30", Offset: "+08:00"},
+		{Wall: "2026:10:07 09:15:30", Subsec: "482", Offset: "-05:00"},
+	} {
+		chunk := src.PngChunk()
+		if chunk == nil {
+			t.Fatalf("PngChunk = nil for %+v", src)
+		}
+		// Go's PNG decoder checks the CRC of every chunk, so decoding the result is
+		// also proof the checksum covers the right bytes.
+		out := InjectPNG(stdlibPNG(t), chunk)
+		if _, err := png.Decode(bytes.NewReader(out)); err != nil {
+			t.Fatalf("injected PNG no longer decodes: %v", err)
+		}
+		if got := Scan(out); got != src {
+			t.Errorf("round trip of %+v gave %+v", src, got)
+		}
+	}
+}
+
+func TestPngChunkNilForInvalidDate(t *testing.T) {
+	if got := (Date{Wall: "junk"}).PngChunk(); got != nil {
+		t.Fatalf("PngChunk = %x", got)
+	}
+}
+
+func TestInjectPNG(t *testing.T) {
+	ihdr := chunk{"IHDR", []byte("\x00\x00\x00\x04\x00\x00\x00\x04\x08\x06")}
+	body := pngFile(ihdr, chunk{"IDAT", []byte("\x01\x02")})
+	chunkBytes := (Date{Wall: "2026:10:07 09:15:30"}).PngChunk()
+
+	out := InjectPNG(body, chunkBytes)
+	// The chunk lands between IHDR and IDAT, which is where the spec puts it.
+	at := 8 + 12 + len(ihdr.body)
+	if string(out[at+4:at+8]) != "eXIf" {
+		t.Fatalf("eXIf not after IHDR: %x", out[at:at+8])
+	}
+	if !bytes.Equal(out[at+len(chunkBytes):], body[at:]) {
+		t.Error("the bytes after the inserted chunk moved")
+	}
+
+	for _, notPng := range [][]byte{{0xff, 0xd8, 0xff, 0xd9}, []byte("PNG\x1a"), nil} {
+		if got := InjectPNG(notPng, chunkBytes); !bytes.Equal(got, notPng) {
+			t.Errorf("non-PNG %x modified: %x", notPng, got)
+		}
+	}
+	// Too short to hold a complete IHDR header.
+	if got := InjectPNG(body[:12], chunkBytes); !bytes.Equal(got, body[:12]) {
+		t.Error("truncated PNG modified")
+	}
+	// An IHDR whose declared length runs past the end of the file.
+	lying := append([]byte{}, body...)
+	binary.BigEndian.PutUint32(lying[8:12], 1<<20)
+	if got := InjectPNG(lying, chunkBytes); !bytes.Equal(got, lying) {
+		t.Error("impossible IHDR length accepted")
+	}
+	if got := InjectPNG(body, nil); !bytes.Equal(got, body) {
+		t.Error("empty chunk modified the image")
+	}
+}
+
+func TestMetaReadsOrientationAlongsideTheDate(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		order binary.ByteOrder
+		o     uint16
+	}{
+		{"little endian", binary.LittleEndian, 6},
+		{"big endian", binary.BigEndian, 8},
+	} {
+		tiff := buildTIFF(t, tc.order,
+			[]ifdTag{
+				{tag: tagOrientation, isShort: true, short: tc.o},
+				{tag: tagDateTime, text: "2026:10:07 09:15:30"},
+			},
+		)
+		doc := Meta(jpegFile(exifApp1(tiff)))
+		if doc.Orientation != tc.o {
+			t.Errorf("%s: Orientation = %d, want %d", tc.name, doc.Orientation, tc.o)
+		}
+		if doc.Taken.Wall != "2026:10:07 09:15:30" {
+			t.Errorf("%s: Taken = %+v", tc.name, doc.Taken)
+		}
+	}
+}
+
+func TestMetaReportsOrientationWithoutADate(t *testing.T) {
+	tiff := buildTIFF(t, binary.LittleEndian,
+		[]ifdTag{{tag: tagOrientation, isShort: true, short: 3}},
+	)
+	doc := Meta(jpegFile(jfif(), exifApp1(tiff)))
+	if doc.Orientation != 3 {
+		t.Errorf("Orientation = %d, want 3", doc.Orientation)
+	}
+	if doc.Taken.Valid() {
+		t.Errorf("Taken = %+v, want the zero Date", doc.Taken)
+	}
+	if doc := Meta(pngFile(chunk{"IHDR", nil}, chunk{"eXIf", tiff})); doc.Orientation != 3 {
+		t.Errorf("PNG eXIf Orientation = %d, want 3", doc.Orientation)
+	}
+}
+
+func TestMetaIgnoresValuesThatAreNotAnOrientation(t *testing.T) {
+	// Wrong field type, and no metadata block at all, must not send the caller
+	// off to turn pixels that were already upright.
+	long := buildTIFF(t, binary.LittleEndian, []ifdTag{{tag: tagOrientation, long: 6}})
+	if o := Meta(jpegFile(exifApp1(long))).Orientation; o != 0 {
+		t.Errorf("LONG-typed tag read as %d", o)
+	}
+	if o := Meta(jpegFile(jfif())).Orientation; o != 0 {
+		t.Errorf("EXIF-less JPEG read as %d", o)
+	}
+	if o := Meta(stdlibJPEG(t)).Orientation; o != 0 {
+		t.Errorf("stdlib JPEG read as %d", o)
+	}
+	// A number outside the eight EXIF defines is passed straight through; deciding
+	// what to do with it is the reader's job.
+	bogus := buildTIFF(t, binary.LittleEndian, []ifdTag{{tag: tagOrientation, isShort: true, short: 200}})
+	if o := Meta(jpegFile(exifApp1(bogus))).Orientation; o != 200 {
+		t.Errorf("bogus value = %d, want 200", o)
 	}
 }
 

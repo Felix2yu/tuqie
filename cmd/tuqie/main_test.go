@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"tuqie/internal/server"
 )
 
 // freeAddr reserves a port, then releases it so run() can bind it. The gap is
@@ -34,7 +36,7 @@ func get(url string) (*http.Response, error) {
 func TestRunServesThenShutsDownOnSignal(t *testing.T) {
 	addr := freeAddr(t)
 	done := make(chan error, 1)
-	go func() { done <- run(addr, t.TempDir(), time.Hour) }()
+	go func() { done <- run(addr, t.TempDir(), time.Hour, server.Config{}) }()
 
 	deadline := time.Now().Add(5 * time.Second)
 	var resp *http.Response
@@ -85,14 +87,14 @@ func TestRunFailsWhenUploadDirIsUnusable(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := run(freeAddr(t), filepath.Join(blocker, "tuqie"), time.Hour)
+	err := run(freeAddr(t), filepath.Join(blocker, "tuqie"), time.Hour, server.Config{})
 	if err == nil {
 		t.Fatal("want the store error to abort startup")
 	}
 }
 
 func TestRunFailsOnABadListenAddress(t *testing.T) {
-	err := run(fmt.Sprintf("127.0.0.1:%d", 70000), t.TempDir(), time.Hour)
+	err := run(fmt.Sprintf("127.0.0.1:%d", 70000), t.TempDir(), time.Hour, server.Config{})
 	if err == nil {
 		t.Fatal("want the listen error to reach the caller")
 	}

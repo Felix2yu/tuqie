@@ -420,6 +420,120 @@ func datedJPEG(t *testing.T, taken exif.Date) []byte {
 	return exif.InjectJPEG(buf.Bytes(), taken.App1())
 }
 
+// tag is how a pixel can be recognised wherever it ends up.
+func tag(x, y int) color.RGBA {
+	return color.RGBA{R: uint8(20 + x*60), G: uint8(20 + y*60), B: 200, A: 255}
+}
+
+func TestUprightFollowsTheTag(t *testing.T) {
+	const w, h = 3, 2
+	src := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			src.SetRGBA(x, y, tag(x, y))
+		}
+	}
+
+	// Each case states where the pixel standing at x,y in the upright picture
+	// has to have come from, written out rather than derived from the code.
+	for _, tc := range []struct {
+		o    uint16
+		dims image.Point
+		from func(x, y int) (int, int)
+	}{
+		{1, image.Point{w, h}, func(x, y int) (int, int) { return x, y }},
+		{2, image.Point{w, h}, func(x, y int) (int, int) { return w - 1 - x, y }},
+		{3, image.Point{w, h}, func(x, y int) (int, int) { return w - 1 - x, h - 1 - y }},
+		{4, image.Point{w, h}, func(x, y int) (int, int) { return x, h - 1 - y }},
+		{5, image.Point{h, w}, func(x, y int) (int, int) { return y, x }},
+		{6, image.Point{h, w}, func(x, y int) (int, int) { return y, h - 1 - x }},
+		{7, image.Point{h, w}, func(x, y int) (int, int) { return w - 1 - y, h - 1 - x }},
+		{8, image.Point{h, w}, func(x, y int) (int, int) { return w - 1 - y, x }},
+	} {
+		got := upright(src, tc.o)
+		if b := got.Bounds(); b.Dx() != tc.dims.X || b.Dy() != tc.dims.Y {
+			t.Fatalf("orientation %d bounds = %dx%d, want %dx%d", tc.o, b.Dx(), b.Dy(), tc.dims.X, tc.dims.Y)
+		}
+		for y := 0; y < got.Rect.Dy(); y++ {
+			for x := 0; x < got.Rect.Dx(); x++ {
+				sx, sy := tc.from(x, y)
+				if want := tag(sx, sy); got.RGBAAt(x, y) != want {
+					t.Errorf("orientation %d: (%d,%d) = %+v, want %+v from (%d,%d)", tc.o, x, y, got.RGBAAt(x, y), want, sx, sy)
+				}
+			}
+		}
+	}
+}
+
+func TestUprightLeavesAloneWhatItDoesNotRecognise(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 2, 2))
+	for _, o := range []uint16{0, 1, 9, 200} {
+		if got := upright(src, o); got != src {
+			t.Errorf("orientation %d rewrote pixels that needed no turning", o)
+		}
+	}
+}
+
+// orientedJPEG is a 4x8 JPEG carrying nothing but an Orientation tag: one inline
+// SHORT entry in IFD0 is the whole block as a camera would write it.
+func orientedJPEG(t *testing.T, o uint16) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 4, 8)), &jpeg.Options{Quality: 80}); err != nil {
+		t.Fatal(err)
+	}
+	tiff := []byte{
+		'I', 'I', 0x2a, 0x00, 8, 0, 0, 0, // little endian, IFD0 at 8
+		1, 0, // one entry
+		0x12, 0x01, 3, 0, 1, 0, 0, 0, // tag 0x0112, SHORT, count 1
+		byte(o), 0, 0, 0, // value, inline
+		0, 0, 0, 0, // no follow-on IFD
+	}
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	framed := []byte{0xff, 0xe1, byte((len(payload) + 2) >> 8), byte(len(payload) + 2)}
+	framed = append(framed, payload...)
+	raw := buf.Bytes()
+	return append(append(raw[:2:2], framed...), raw[2:]...)
+}
+
+func TestPutReportsTheDisplayedDimensions(t *testing.T) {
+	s := newStore(t, time.Hour)
+	p := put(t, s, orientedJPEG(t, 6), "portrait.jpg")
+
+	if p.Orientation != 6 {
+		t.Fatalf("Orientation = %d, want 6", p.Orientation)
+	}
+	if p.Width != 8 || p.Height != 4 {
+		t.Errorf("reported %dx%d, want the stored 4x8 turned upright", p.Width, p.Height)
+	}
+	img, err := p.Image()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 8 || b.Dy() != 4 {
+		t.Errorf("decoded %dx%d, want 8x4", b.Dx(), b.Dy())
+	}
+}
+
+func TestPutLeavesBogusOrientationAlone(t *testing.T) {
+	s := newStore(t, time.Hour)
+	p := put(t, s, orientedJPEG(t, 200), "odd.jpg")
+
+	if p.Orientation != 200 {
+		t.Fatalf("Orientation = %d, want the tag passed through", p.Orientation)
+	}
+	if p.Width != 4 || p.Height != 8 {
+		t.Errorf("reported %dx%d, want the stored dimensions kept", p.Width, p.Height)
+	}
+	img, err := p.Image()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := img.Bounds(); b.Dx() != 4 || b.Dy() != 8 {
+		t.Errorf("decoded %dx%d, want 4x8", b.Dx(), b.Dy())
+	}
+}
+
 func TestPutReadsSourceDateAndKeepsBytes(t *testing.T) {
 	s := newStore(t, time.Hour)
 	taken := exif.Date{Wall: "2026:10:07 09:15:30", Subsec: "482", Offset: "+08:00"}

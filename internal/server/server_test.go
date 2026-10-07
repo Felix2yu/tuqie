@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -24,6 +25,10 @@ import (
 	"tuqie/internal/axis"
 	"tuqie/internal/exif"
 	"tuqie/internal/store"
+
+	"github.com/gen2brain/avif"
+	"github.com/gen2brain/h265/heic"
+	"github.com/gen2brain/jxl"
 )
 
 func TestBandsFromCuts(t *testing.T) {
@@ -52,6 +57,10 @@ func TestBandsFromCuts(t *testing.T) {
 // ---- HTTP surface ----
 
 func newHandler(t *testing.T) (http.Handler, *store.Store) {
+	return newHandlerConfig(t, Config{})
+}
+
+func newHandlerConfig(t *testing.T, cfg Config) (http.Handler, *store.Store) {
 	t.Helper()
 	st, err := store.New(t.TempDir(), time.Hour)
 	if err != nil {
@@ -59,7 +68,7 @@ func newHandler(t *testing.T) (http.Handler, *store.Store) {
 	}
 	t.Cleanup(st.Close)
 	fsys := fstest.MapFS{"index.html": &fstest.MapFile{Data: []byte("<html>tuqie</html>")}}
-	return New(st, fsys).Handler(), st
+	return New(st, fsys, cfg).Handler(), st
 }
 
 func testPNG(t *testing.T, w, h int) []byte {
@@ -259,6 +268,73 @@ func TestSliceServesBands(t *testing.T) {
 	}
 }
 
+func TestSliceServesTheContainerFormats(t *testing.T) {
+	handler, _ := newHandler(t)
+	res := upload(t, handler, testPNG(t, 12, 30))
+
+	for _, tc := range []struct{ format, mime string }{
+		{"heic", "image/heic"},
+		{"avif", "image/avif"},
+		{"jxl", "image/jxl"},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/slice?id="+res.ID+"&axis=y&from=4&to=19&format="+tc.format+"&quality=90", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", tc.format, rec.Code, rec.Body.String())
+		}
+		if got := rec.Header().Get("Content-Type"); got != tc.mime {
+			t.Errorf("%s content-type %q, want %q", tc.format, got, tc.mime)
+		}
+		want := `inline; filename="piece-01.` + tc.format + `"`
+		if got := rec.Header().Get("Content-Disposition"); got != want {
+			t.Errorf("disposition %q, want %q", got, want)
+		}
+		img, err := decodeAs(tc.format, rec.Body.Bytes())
+		if err != nil {
+			t.Errorf("%s body: %v", tc.format, err)
+			continue
+		}
+		if r := img.Bounds(); r.Dx() != 12 || r.Dy() != 15 {
+			t.Errorf("%s bounds %v, want 12x15", tc.format, r)
+		}
+	}
+
+	// The ZIP names an entry by what it actually holds, so the album or the file
+	// manager on the other end sees .jxl rather than a .jpg that is not one.
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/export",
+		strings.NewReader(`{"id":"`+res.ID+`","axis":"y","cuts":[15],"format":"avif"}`)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export %d: %s", rec.Code, rec.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(zr.File) != 2 {
+		t.Fatalf("entries %d, want 2", len(zr.File))
+	}
+	for i, f := range zr.File {
+		want := fmt.Sprintf("shot-%02d.avif", i+1)
+		if f.Name != want {
+			t.Errorf("entry %d is %q, want %q", i, f.Name, want)
+		}
+	}
+}
+
+// decodeAs reads a slice back with the decoder belonging to its format.
+func decodeAs(format string, body []byte) (image.Image, error) {
+	r := bytes.NewReader(body)
+	switch format {
+	case "heic":
+		return heic.Decode(r)
+	case "avif":
+		return avif.Decode(r)
+	}
+	return jxl.Decode(r)
+}
+
 func TestSliceRejectsBadRequests(t *testing.T) {
 	handler, st := newHandler(t)
 	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
@@ -348,6 +424,103 @@ func TestExportZipsBands(t *testing.T) {
 	}
 }
 
+func TestExportNamesAndSkips(t *testing.T) {
+	handler, _ := newHandler(t)
+	// Four bands: 0..4, 4..10, 10..20, 20..30.
+	res := upload(t, handler, testPNG(t, 10, 30))
+
+	export := func(t *testing.T, payload string) []string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/export", strings.NewReader(payload)))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("export %d: %s", rec.Code, rec.Body.String())
+		}
+		zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, f := range zr.File {
+			names = append(names, f.Name)
+		}
+		return names
+	}
+	req := func(prefix, body string) string {
+		return `{"id":"` + res.ID +
+			`","axis":"y","cuts":[4,10,20],"format":"png","prefix":"` + prefix + `"` + body + `}`
+	}
+
+	got := export(t, req("会话", `,"skip":[0,2],"start":7`))
+	if want := []string{"会话-07.png", "会话-08.png"}; !reflect.DeepEqual(got, want) {
+		// Skipping must not leave holes behind: the album numbers what it received.
+		t.Fatalf("entries %v, want %v", got, want)
+	}
+	// The digit width follows the last number, so a long run still sorts by name.
+	got = export(t, req("会话", `,"start":98`))
+	if want := []string{"会话-098.png", "会话-099.png", "会话-100.png", "会话-101.png"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries %v, want %v", got, want)
+	}
+	// Numbering from zero is a choice, not a missing field.
+	got = export(t, req("会话", `,"start":0`))
+	if want := []string{"会话-00.png", "会话-01.png", "会话-02.png", "会话-03.png"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries %v, want %v", got, want)
+	}
+	// A band index that no longer exists is ignored, not an error.
+	got = export(t, req("会话", `,"skip":[9,-1]`))
+	if want := []string{"会话-01.png", "会话-02.png", "会话-03.png", "会话-04.png"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("entries %v, want %v", got, want)
+	}
+	for _, name := range export(t, req("../../etc/passwd", "")) {
+		if strings.Contains(name, "..") || strings.Contains(name, "/") {
+			t.Fatalf("entry %q escapes the archive root", name)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/export",
+		strings.NewReader(req("会话", `,"skip":[0,1,2,3]`))))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("excluding everything: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestSafePrefix(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"会话截图", "会话截图"},
+		{"  spaced  ", "spaced"},
+		{`a/b\c:d`, "a_b_c_d"},
+		{`quote"name`, "quote_name"},
+		{"tab\tnewline\n", "tab_newline"},
+		{"../../etc/passwd", "___etc_passwd"},
+		{"trailing...", "trailing"},
+		{".", ""},
+		{"", ""},
+		{strings.Repeat("长", 100), strings.Repeat("长", 80)},
+	} {
+		if got := safePrefix(tc.in); got != tc.want {
+			t.Errorf("safePrefix(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNamePad(t *testing.T) {
+	for _, tc := range []struct {
+		start, count, want int
+	}{
+		{1, 1, 2},
+		{1, 99, 2},
+		{1, 999, 3},
+		{98, 4, 3},
+		{0, 1, 2},
+		{1000, 1, 4},
+	} {
+		if got := namePad(tc.start, tc.count); got != tc.want {
+			t.Errorf("namePad(%d,%d) = %d, want %d", tc.start, tc.count, got, tc.want)
+		}
+	}
+}
+
 func TestExportRejectsBadRequests(t *testing.T) {
 	handler, st := newHandler(t)
 	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
@@ -431,7 +604,7 @@ func TestImageSurvivesADroppedClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	s := New(st, fstest.MapFS{})
+	s := New(st, fstest.MapFS{}, Config{})
 
 	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
 	if err != nil {
@@ -483,7 +656,7 @@ func TestExportSurvivesADroppedClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	s := New(st, fstest.MapFS{})
+	s := New(st, fstest.MapFS{}, Config{})
 
 	// One band has to be big enough that the zip flushes while writing it,
 	// which is when the dead client shows up.
@@ -610,23 +783,29 @@ func TestSliceKeepsTheSourceDate(t *testing.T) {
 		t.Fatalf("slice date = %+v, want %+v", got, taken)
 	}
 
-	// PNG output has no date field readers agree on, so nothing is claimed for it.
+	// PNG output carries the same date in an eXIf chunk, so the format choice does
+	// not decide whether the album shows the right day.
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
 		"/api/slice?id="+res.ID+"&axis=y&from=4&to=19&format=png", nil))
-	if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
-		t.Fatalf("PNG slice picked up %+v", d)
+	if _, err := png.Decode(bytes.NewReader(rec.Body.Bytes())); err != nil {
+		t.Fatalf("dated PNG slice no longer decodes: %v", err)
+	}
+	if got := exif.Scan(rec.Body.Bytes()); got != taken {
+		t.Fatalf("PNG slice date = %+v, want %+v", got, taken)
 	}
 }
 
 func TestSliceOfUndatedUploadStaysClean(t *testing.T) {
 	handler, _ := newHandler(t)
 	res := upload(t, handler, testPNG(t, 12, 30))
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
-		"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&format=jpeg", nil))
-	if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
-		t.Fatalf("an undated source produced %+v", d)
+	for _, format := range []string{"jpeg", "png"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&format="+format, nil))
+		if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
+			t.Fatalf("an undated source produced %+v as %s", d, format)
+		}
 	}
 }
 
@@ -757,5 +936,143 @@ func TestEntryTimeBounds(t *testing.T) {
 	when, ok := entryTime(exif.Date{Wall: "1980:01:01 00:00:00"})
 	if !ok || when.Year() != 1980 {
 		t.Fatalf("1980 should be stampable, got %v, %v", when, ok)
+	}
+}
+
+func TestPreviewShrinksABigUpload(t *testing.T) {
+	handler, st := newHandler(t)
+	res := upload(t, handler, testPNG(t, 3000, 3000))
+	if !strings.HasPrefix(res.URL, "/api/preview") {
+		t.Fatalf("url = %q, want the preview endpoint", res.URL)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, res.URL, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("content type %q, want image/jpeg", got)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "jpeg" || cfg.Width != 2000 || cfg.Height != 2000 {
+		t.Fatalf("preview is %s %dx%d, want jpeg 2000x2000", format, cfg.Width, cfg.Height)
+	}
+
+	p, ok := st.Get(res.ID)
+	if !ok {
+		t.Fatal("upload vanished")
+	}
+	if _, err := os.Stat(p.PreviewPath()); err != nil {
+		t.Fatalf("rendered preview was not cached: %v", err)
+	}
+}
+
+func TestPreviewFallsBackToTheOriginal(t *testing.T) {
+	handler, _ := newHandler(t)
+	data := testPNG(t, 60, 40)
+	res := upload(t, handler, data)
+	if want := "/api/image?id=" + res.ID; res.URL != want {
+		t.Fatalf("url = %q, want %q", res.URL, want)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/preview?id="+res.ID, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("content type %q, want the original image/png", got)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), data) {
+		t.Fatal("a picture that needs no shrinking should be served untouched")
+	}
+}
+
+// heicBytes is a small HEIC, the kind an iPhone writes for every photo it takes.
+func heicBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: uint8(x * 3), G: uint8(y * 4), B: 128, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := heic.Encode(&buf, img, heic.EncodeOptions{Quality: 70}); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+func TestAFormatTheBrowserCannotDrawGetsARendition(t *testing.T) {
+	handler, _ := newHandler(t)
+	res := uploadNamed(t, handler, "photo.heic", heicBytes(t, 60, 40))
+
+	if res.Mime != "image/heic" {
+		t.Fatalf("mime %q, want image/heic", res.Mime)
+	}
+	if res.Width != 60 || res.Height != 40 {
+		t.Fatalf("dims %dx%d, want 60x40", res.Width, res.Height)
+	}
+	// Small enough to hand over whole, and still no JPEG the browser can show, so
+	// the working view comes from a rendition made at the original size.
+	if want := "/api/preview?id=" + res.ID; res.URL != want {
+		t.Fatalf("url = %q, want %q", res.URL, want)
+	}
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, res.URL, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("content type %q, want image/jpeg", got)
+	}
+	cfg, format, err := image.DecodeConfig(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if format != "jpeg" || cfg.Width != 60 || cfg.Height != 40 {
+		t.Fatalf("rendition is %s %dx%d, want jpeg 60x40", format, cfg.Width, cfg.Height)
+	}
+
+	// The slices still come out of the container's own pixels, not the rendition.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&index=0&format=png&quality=80", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("slice: %d %s", rec.Code, rec.Body.String())
+	}
+	sliced, err := png.Decode(rec.Body)
+	if err != nil {
+		t.Fatalf("slice did not decode: %v", err)
+	}
+	if b := sliced.Bounds(); b.Dx() != 60 || b.Dy() != 30 {
+		t.Fatalf("slice is %dx%d, want 60x30", b.Dx(), b.Dy())
+	}
+}
+
+func TestOnlyWhatBrowsersDrawStaysOriginal(t *testing.T) {
+	for _, tc := range []struct {
+		mime string
+		want bool
+	}{
+		{"image/png", true},
+		{"image/jpeg", true},
+		{"image/gif", true},
+		{"image/webp", true},
+		{"image/avif", true},
+		{"image/heic", false},
+		{"image/heif", false},
+		{"image/jxl", false},
+		{"application/octet-stream", false},
+	} {
+		if got := drawsInline(tc.mime); got != tc.want {
+			t.Errorf("drawsInline(%q) = %v, want %v", tc.mime, got, tc.want)
+		}
 	}
 }
