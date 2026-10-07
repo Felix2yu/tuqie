@@ -13,10 +13,16 @@ import {
   bandsFromCuts,
   clampCut,
   extFor,
+  namePad,
   normalize,
   pieceName,
   resolveCuts,
+  sanitizePrefix,
+  splitCuts,
+  stemOf,
   type Band,
+  type Naming,
+  type SplitMode,
 } from './lib/cuts';
 import {
   canShareFiles,
@@ -43,6 +49,10 @@ export default function App() {
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [removed, setRemoved] = useState<number[]>([]);
   const [manual, setManual] = useState<number[]>([]);
+  const [splitMode, setSplitMode] = useState<SplitMode>('count');
+  const [splitValue, setSplitValue] = useState(4);
+  const [skipped, setSkipped] = useState<number[]>([]);
+  const [naming, setNaming] = useState<Naming>({ prefix: '', start: 1 });
   const [fit, setFit] = useState<'fill' | 'page'>('fill');
   const [settings, setSettings] = useState<Settings>({ format: 'jpeg', quality: 90 });
   const [viewport, setViewport] = useState<[number, number]>([0, 1]);
@@ -61,8 +71,18 @@ export default function App() {
     [analysis, threshold, removed, manual, length],
   );
   const bands = useMemo(() => bandsFromCuts(cuts, length), [cuts, length]);
+  const skipSet = useMemo(() => new Set(skipped), [skipped]);
+  // Export numbering runs over the kept pieces, so dropping one closes the gap.
+  const exported = useMemo(() => bands.filter((b) => !skipSet.has(b.index)), [bands, skipSet]);
+  const ordinalOf = useCallback(
+    (bandIndex: number) => exported.filter((b) => b.index < bandIndex).length,
+    [exported],
+  );
   const keptCount = useMemo(
-    () => (analysis ? analysis.candidates.filter((c) => c.score >= threshold).length : 0),
+    () =>
+      analysis && threshold < 1
+        ? analysis.candidates.filter((c) => c.score >= threshold).length
+        : 0,
     [analysis, threshold],
   );
 
@@ -76,6 +96,7 @@ export default function App() {
     setThreshold(DEFAULT_THRESHOLD);
     setRemoved([]);
     setManual([]);
+    setSkipped([]);
     setStatus(null);
     setUploadError(null);
     setZoom(null);
@@ -92,6 +113,9 @@ export default function App() {
       setFit(res.axis === 'x' ? 'page' : 'fill');
       setRemoved([]);
       setManual([]);
+      setSkipped([]);
+      // The uploaded file's own name is the sensible starting prefix.
+      setNaming({ prefix: stemOf(res.filename), start: 1 });
       setStatus(null);
     } catch (err) {
       setUploadError((err as Error).message);
@@ -122,15 +146,40 @@ export default function App() {
     setManual((m) => m.filter((v) => v !== pos));
   };
 
+  // A regular grid is what the user asked for, so it replaces the detected lines
+  // rather than mixing with them: the threshold goes to its top position, which
+  // now means "no detected line", and the grid lines become the only cuts.
+  const applySplit = () => {
+    if (!analysis) return;
+    const next = splitCuts(splitMode, splitValue, length);
+    if (next.length === 0) {
+      setStatus({ tone: 'warn', text: '这个数值在这张图上分不出切片' });
+      return;
+    }
+    setThreshold(1);
+    setRemoved([]);
+    setManual(next);
+    setStatus({
+      tone: 'ok',
+      text:
+        splitMode === 'count'
+          ? `已按 ${splitValue} 等分重排 · ${next.length + 1} 张`
+          : `已按每段 ${splitValue}px 重排 · ${next.length + 1} 张`,
+    });
+  };
+
+  const toggleSkip = (index: number) =>
+    setSkipped((s) => (s.includes(index) ? s.filter((v) => v !== index) : [...s, index]));
+
   const exportPieces = async (): Promise<void> => {
     if (!analysis) return;
-    const total = bands.length;
+    const total = exported.length;
     if (shareAvailable) {
       const pieces = await renderPieces(
         analysis.id,
         analysis.axis,
-        bands,
-        analysis.filename,
+        exported,
+        naming,
         settings.format,
         settings.quality,
         (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`),
@@ -145,8 +194,8 @@ export default function App() {
     const pieces = await renderPieces(
       analysis.id,
       analysis.axis,
-      bands,
-      analysis.filename,
+      exported,
+      naming,
       settings.format,
       settings.quality,
       (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`),
@@ -172,9 +221,22 @@ export default function App() {
     setBusy('正在打包 ZIP…');
     setStatus(null);
     try {
-      const blob = await zipPieces(analysis.id, analysis.axis, cuts, settings.format, settings.quality);
-      downloadBlob(blob, `${analysis.filename.replace(/\.[^./]*$/, '')}-slices.zip`);
-      setStatus({ tone: 'ok', text: `ZIP 已下载，共 ${bands.length} 张` });
+      const blob = await zipPieces(
+        analysis.id,
+        analysis.axis,
+        cuts,
+        skipped,
+        naming,
+        settings.format,
+        settings.quality,
+      );
+      const prefix = sanitizePrefix(naming.prefix) || stemOf(analysis.filename);
+      downloadBlob(blob, `${prefix}-slices.zip`);
+      const left = bands.length - exported.length;
+      setStatus({
+        tone: 'ok',
+        text: `ZIP 已下载，共 ${exported.length} 张${left ? `（跳过 ${left} 张）` : ''}`,
+      });
     } catch (err) {
       setStatus({ tone: 'err', text: (err as Error).message });
     } finally {
@@ -193,7 +255,8 @@ export default function App() {
       <header className="flex items-center gap-3 border-b border-ink-700 bg-ink-900 px-3 py-2">
         <span className="text-sm font-semibold text-white">图切</span>
         <span className="min-w-0 flex-1 truncate text-xs text-ink-400">
-          {analysis.filename} · {analysis.width}×{analysis.height} · {bands.length} 张
+          {analysis.filename} · {analysis.width}×{analysis.height} · {exported.length} 张
+          {exported.length < bands.length ? `（跳过 ${bands.length - exported.length}）` : ''}
         </span>
         <button
           type="button"
@@ -236,16 +299,24 @@ export default function App() {
           <Controls
             analysis={analysis}
             axis={analysis.axis}
-            pieceCount={bands.length}
+            length={length}
+            pieceCount={exported.length}
             threshold={threshold}
             keptCount={keptCount}
             candidateCount={analysis.candidates.length}
+            splitMode={splitMode}
+            splitValue={splitValue}
+            naming={naming}
             fit={fit}
             settings={settings}
             busy={busy}
             status={status}
             shareAvailable={shareAvailable}
             onThreshold={setThreshold}
+            onSplitMode={setSplitMode}
+            onSplitValue={setSplitValue}
+            onApplySplit={applySplit}
+            onNaming={setNaming}
             onFit={setFit}
             onAcceptAll={() => {
               setRemoved([]);
@@ -269,6 +340,8 @@ export default function App() {
               imageWidth={analysis.width}
               imageHeight={analysis.height}
               bands={bands}
+              skipped={skipSet}
+              onToggleSkip={toggleSkip}
               onPick={setZoom}
             />
           </div>
@@ -283,8 +356,13 @@ export default function App() {
                 settings.format,
                 settings.quality,
               )}
-              name={pieceName(analysis.filename, zoom.index, extFor(settings.format))}
-              label={`${zoom.index + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoom)}`}
+              name={pieceName(
+                naming,
+                ordinalOf(zoom.index),
+                extFor(settings.format),
+                namePad(naming.start, exported.length),
+              )}
+              label={`${ordinalOf(zoom.index) + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoom)}`}
               onClose={() => setZoom(null)}
             />
           )}

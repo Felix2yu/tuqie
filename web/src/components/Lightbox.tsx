@@ -11,11 +11,17 @@ type Props = {
 export default function Lightbox({ src, name, label, onClose }: Props) {
   const [actual, setActual] = useState(false);
   const [natural, setNatural] = useState<[number, number] | null>(null);
+  // HEIC and JXL are written out for the photo library, not for a browser: Chrome
+  // refuses both. The file is still there to save, so say that instead of showing
+  // a broken image.
+  const [undecodable, setUndecodable] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   // Held in a ref so the open/close effect runs once per mount even though the
   // parent passes a fresh closure on every render.
   const close = useRef(onClose);
   close.current = onClose;
+
+  useEffect(() => setUndecodable(false), [src]);
 
   useEffect(() => {
     const opener = document.activeElement as HTMLElement | null;
@@ -68,24 +74,31 @@ export default function Lightbox({ src, name, label, onClose }: Props) {
         </button>
       </div>
       <div onClick={onClose} className="min-h-0 flex-1 overflow-auto">
-        <img
-          src={src}
-          alt={label}
-          onClick={(e) => {
-            e.stopPropagation();
-            setActual((v) => !v);
-          }}
-          onLoad={(e) => {
-            const img = e.currentTarget;
-            setNatural([img.naturalWidth, img.naturalHeight]);
-          }}
-          className="m-auto block select-none"
-          style={
-            actual && natural
-              ? { width: natural[0], height: natural[1], maxWidth: 'none', maxHeight: 'none' }
-              : { maxWidth: '100%', maxHeight: '100%' }
-          }
-        />
+        {undecodable ? (
+          <p className="m-auto max-w-sm px-4 pt-24 text-center text-sm text-ink-400">
+            浏览器画不出 {name.slice(name.lastIndexOf('.') + 1).toUpperCase()}，用「另存」拿到这一张。
+          </p>
+        ) : (
+          <img
+            src={src}
+            alt={label}
+            onError={() => setUndecodable(true)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActual((v) => !v);
+            }}
+            onLoad={(e) => {
+              const img = e.currentTarget;
+              setNatural([img.naturalWidth, img.naturalHeight]);
+            }}
+            className="m-auto block select-none"
+            style={
+              actual && natural
+                ? { width: natural[0], height: natural[1], maxWidth: 'none', maxHeight: 'none' }
+                : { maxWidth: '100%', maxHeight: '100%' }
+            }
+          />
+        )}
       </div>
     </div>
   );

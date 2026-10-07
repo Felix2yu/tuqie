@@ -29,7 +29,7 @@ export type Analysis = {
   taken?: number;
 };
 
-export type Format = 'jpeg' | 'png';
+export type Format = 'jpeg' | 'png' | 'heic' | 'avif' | 'jxl';
 
 export type Settings = {
   format: Format;

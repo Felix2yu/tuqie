@@ -5,6 +5,19 @@ export const MIN_PIECE_PX = 30;
 
 export type Band = { index: number; from: number; to: number; size: number };
 
+/** How a regular grid of cuts is asked for: a number of pieces, or a piece size. */
+export type SplitMode = 'count' | 'length';
+
+/** The smallest sensible value for each mode; anything below is a sliver, not a piece. */
+export function splitFloor(mode: SplitMode): number {
+  return mode === 'count' ? 2 : MIN_PIECE_PX;
+}
+
+/** The cut set a split request stands for, in either mode. */
+export function splitCuts(mode: SplitMode, value: number, length: number): number[] {
+  return mode === 'count' ? equalCuts(length, value) : fixedCuts(length, value);
+}
+
 /** How far cut positions run: the width for a left-to-right stitch, the height otherwise. */
 export function axisLength(axis: Axis, width: number, height: number): number {
   return axis === 'x' ? width : height;
@@ -27,6 +40,9 @@ export function normalize(cuts: number[], length: number): number[] {
  * Detected lines are kept as long as their score passes the threshold and the
  * user has not removed them; hand-drawn lines always survive. Raising the
  * threshold therefore re-adds lines without throwing away manual work.
+ *
+ * The slider's top position means "no detected line at all". Scores can reach 1
+ * exactly, so the comparison alone would leave the strongest line behind.
  */
 export function resolveCuts(
   candidates: Candidate[],
@@ -36,8 +52,29 @@ export function resolveCuts(
   length: number,
 ): number[] {
   const gone = new Set(removed);
-  const auto = candidates.filter((c) => c.score >= threshold && !gone.has(c.pos)).map((c) => c.pos);
+  const auto =
+    threshold >= 1
+      ? []
+      : candidates.filter((c) => c.score >= threshold && !gone.has(c.pos)).map((c) => c.pos);
   return normalize([...auto, ...manual.filter((p) => !gone.has(p))], length);
+}
+
+/** N equal bands need N-1 interior lines. Rounding each one on its own keeps the
+ *  ends square instead of letting the error drift across the picture. */
+export function equalCuts(length: number, count: number): number[] {
+  if (count < 2) return [];
+  const out: number[] = [];
+  for (let i = 1; i < count; i++) out.push(Math.round((length * i) / count));
+  return normalize(out, length);
+}
+
+/** Lines every step pixels. Whatever is left at the far end becomes its own band,
+ *  unless it is too thin to be a piece, in which case it joins the last one. */
+export function fixedCuts(length: number, step: number): number[] {
+  if (step < MIN_PIECE_PX) return [];
+  const out: number[] = [];
+  for (let p = step; p < length; p += step) out.push(p);
+  return normalize(out, length);
 }
 
 export function bandsFromCuts(cuts: number[], length: number): Band[] {
@@ -63,9 +100,38 @@ export function positionOf(pos: number, length: number): number {
   return length <= 0 ? 0 : (pos / length) * 100;
 }
 
-export function pieceName(base: string, index: number, ext: string): string {
-  const stem = base.replace(/\.[^./]*$/, '') || 'screenshot';
-  return `${stem}-${String(index + 1).padStart(2, '0')}.${ext}`;
+/** What a slice is called: a prefix the user typed and the number of that piece. */
+export type Naming = { prefix: string; start: number };
+
+/** The file stem an upload brings, which is the prefix a new session starts with. */
+export function stemOf(filename: string): string {
+  return filename.replace(/\.[^./]*$/, '') || 'screenshot';
+}
+
+/**
+ * A prefix becomes part of a zip entry name, and extractors follow "../" without
+ * complaining, so separators and control characters are flattened out here. The
+ * server applies the same rule to whatever arrives over the wire.
+ */
+export function sanitizePrefix(raw: string): string {
+  const s = raw
+    .trim()
+    .replace(/[\/\\:"\u0000-\u001f]/g, '_')
+    .replace(/^[. ]+|[. ]+$/g, '')
+    .replace(/\.\./g, '_');
+  const capped = Array.from(s).slice(0, 80).join('');
+  return capped.replace(/[. ]+$/, '');
+}
+
+/** Two digits at minimum, wider once the run outgrows that, so files sort by name. */
+export function namePad(start: number, count: number): number {
+  const last = Math.max(start, start + count - 1);
+  return Math.max(2, String(last).length);
+}
+
+export function pieceName(naming: Naming, ordinal: number, ext: string, pad: number): string {
+  const num = String(naming.start + ordinal).padStart(pad, '0');
+  return `${sanitizePrefix(naming.prefix) || 'screenshot'}-${num}.${ext}`;
 }
 
 /** The size of a band as it appears under the thumbnail and in the lightbox. */
@@ -73,9 +139,23 @@ export function bandLabel(axis: Axis, width: number, height: number, band: Band)
   return axis === 'x' ? `${band.size}×${height}` : `${width}×${band.size}`;
 }
 
+const EXT: Record<Format, string> = { jpeg: 'jpg', png: 'png', heic: 'heic', avif: 'avif', jxl: 'jxl' };
+const MIME: Record<Format, string> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  heic: 'image/heic',
+  avif: 'image/avif',
+  jxl: 'image/jxl',
+};
+
 /** The extension the server names a slice with. */
 export function extFor(format: Format): string {
-  return format === 'png' ? 'png' : 'jpg';
+  return EXT[format];
+}
+
+/** The type a shared File has to carry for the receiving app to recognise it. */
+export function mimeFor(format: Format): string {
+  return MIME[format];
 }
 
 export function formatBytes(n: number): string {

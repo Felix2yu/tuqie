@@ -1,3 +1,5 @@
+import type { Naming } from './lib/cuts';
+import { sanitizePrefix } from './lib/cuts';
 import type { Analysis, Axis, Format } from './types';
 
 async function errorMessage(res: Response): Promise<string> {
@@ -60,13 +62,24 @@ export async function fetchZip(
   id: string,
   axis: Axis,
   cuts: number[],
+  skip: number[],
+  naming: Naming,
   format: Format,
   quality: number,
 ): Promise<Blob> {
   const res = await fetch('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id, axis, cuts, format, quality }),
+    body: JSON.stringify({
+      id,
+      axis,
+      cuts,
+      skip,
+      prefix: sanitizePrefix(naming.prefix),
+      start: naming.start,
+      format,
+      quality,
+    }),
   });
   if (!res.ok) throw new Error(await errorMessage(res));
   return res.blob();

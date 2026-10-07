@@ -1,6 +1,6 @@
 import { fetchSlice, fetchZip } from '../api';
-import type { Band } from './cuts';
-import { pieceName } from './cuts';
+import type { Band, Naming } from './cuts';
+import { extFor, mimeFor, namePad, pieceName } from './cuts';
 import type { Axis, Format } from '../types';
 
 export type Piece = { name: string; type: string; blob: Blob; band: Band };
@@ -28,21 +28,26 @@ export function canShareFiles(): boolean {
   }
 }
 
+/**
+ * The pieces the user asked for, in export order: excluded bands never reach this
+ * list, so a piece is numbered by its position here and the names stay contiguous.
+ */
 export async function renderPieces(
   id: string,
   axis: Axis,
   bands: Band[],
-  base: string,
+  naming: Naming,
   format: Format,
   quality: number,
   onProgress?: Progress,
 ): Promise<Piece[]> {
-  const ext = format === 'png' ? 'png' : 'jpg';
-  const type = format === 'png' ? 'image/png' : 'image/jpeg';
+  const ext = extFor(format);
+  const type = mimeFor(format);
+  const pad = namePad(naming.start, bands.length);
   const pieces: Piece[] = [];
-  for (const band of bands) {
+  for (const [ordinal, band] of bands.entries()) {
     const blob = await fetchSlice(id, axis, band.from, band.to, band.index, format, quality);
-    pieces.push({ name: pieceName(base, band.index, ext), blob, type, band });
+    pieces.push({ name: pieceName(naming, ordinal, ext, pad), blob, type, band });
     onProgress?.(pieces.length, bands.length);
   }
   return pieces;
@@ -71,10 +76,12 @@ export async function zipPieces(
   id: string,
   axis: Axis,
   cuts: number[],
+  skip: number[],
+  naming: Naming,
   format: Format,
   quality: number,
 ): Promise<Blob> {
-  return fetchZip(id, axis, cuts, format, quality);
+  return fetchZip(id, axis, cuts, skip, naming, format, quality);
 }
 
 export function downloadBlob(blob: Blob, name: string): void {

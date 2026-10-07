@@ -31,6 +31,7 @@ export default function Stage({
   const scroller = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
   const [pageBox, setPageBox] = useState<{ w: number; h: number } | null>(null);
+  const [edit, setEdit] = useState<{ index: number; text: string } | null>(null);
 
   // A horizontal stitch is measured across the width and cut by vertical lines.
   const across = axis === 'x';
@@ -102,6 +103,16 @@ export default function Stage({
     onAdd(posAt(rect.left + rect.width / 2, rect.top + rect.height / 2));
   };
 
+  // The chip is a text field rather than type=number: a wheel over the stage would
+  // otherwise spin the focused value, and "1200px" is a natural thing to paste.
+  const commitEdit = () => {
+    if (!edit) return;
+    const digits = edit.text.match(/\d+/);
+    const index = edit.index;
+    setEdit(null);
+    if (digits) onMove(index, Number(digits[0]));
+  };
+
   // A pointer that has already been released makes setPointerCapture throw.
   const capture = (e: React.PointerEvent) => {
     try {
@@ -161,9 +172,37 @@ export default function Stage({
                     across ? 'left-1/2 top-1 -translate-x-1/2' : 'left-1 top-1/2 -translate-y-1/2'
                   }`}
                 >
-                  <span className="rounded bg-ink-900/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent">
-                    {i + 1} · {pos}px
-                  </span>
+                  {edit?.index === i ? (
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoFocus
+                      value={edit.text}
+                      onChange={(e) => setEdit({ index: i, text: e.target.value })}
+                      onBlur={commitEdit}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') commitEdit();
+                        else if (e.key === 'Escape') setEdit(null);
+                      }}
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onFocus={(e) => e.target.select()}
+                      className="w-[64px] rounded bg-ink-900/95 px-1.5 py-0.5 text-[10px] tabular-nums text-accent outline outline-1 outline-accent"
+                      aria-label={`第 ${i + 1} 条切割线的位置（像素）`}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      title="点击输入精确位置"
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEdit({ index: i, text: String(pos) });
+                      }}
+                      className="rounded bg-ink-900/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent hover:bg-ink-900"
+                    >
+                      {i + 1} · {pos}px
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label="删除这条切割线"
