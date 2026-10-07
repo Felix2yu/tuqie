@@ -1,4 +1,4 @@
-import type { Axis, Candidate } from '../types';
+import type { Axis, Candidate, Format } from '../types';
 
 // A piece thinner than this is almost certainly a stray line, not a photo.
 export const MIN_PIECE_PX = 30;
@@ -66,6 +66,16 @@ export function positionOf(pos: number, length: number): number {
 export function pieceName(base: string, index: number, ext: string): string {
   const stem = base.replace(/\.[^./]*$/, '') || 'screenshot';
   return `${stem}-${String(index + 1).padStart(2, '0')}.${ext}`;
+}
+
+/** The size of a band as it appears under the thumbnail and in the lightbox. */
+export function bandLabel(axis: Axis, width: number, height: number, band: Band): string {
+  return axis === 'x' ? `${band.size}×${height}` : `${width}×${band.size}`;
+}
+
+/** The extension the server names a slice with. */
+export function extFor(format: Format): string {
+  return format === 'png' ? 'png' : 'jpg';
 }
 
 export function formatBytes(n: number): string {

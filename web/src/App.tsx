@@ -1,17 +1,22 @@
 import { useCallback, useMemo, useState } from 'react';
-import { analyze as analyzeFile } from './api';
+import { analyze as analyzeFile, sliceUrl } from './api';
 import Controls from './components/Controls';
 import Dropzone from './components/Dropzone';
+import Lightbox from './components/Lightbox';
 import PiecesGrid from './components/PiecesGrid';
 import Rail from './components/Rail';
 import Stage from './components/Stage';
 import {
   MIN_PIECE_PX,
   axisLength,
+  bandLabel,
   bandsFromCuts,
   clampCut,
+  extFor,
   normalize,
+  pieceName,
   resolveCuts,
+  type Band,
 } from './lib/cuts';
 import {
   canShareFiles,
@@ -44,6 +49,7 @@ export default function App() {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const [zoom, setZoom] = useState<Band | null>(null);
 
   const shareAvailable = useMemo(() => canShareFiles(), []);
   const axis = analysis?.axis ?? 'y';
@@ -72,6 +78,7 @@ export default function App() {
     setManual([]);
     setStatus(null);
     setUploadError(null);
+    setZoom(null);
   };
 
   const handleFile = async (file: File) => {
@@ -262,8 +269,25 @@ export default function App() {
               imageWidth={analysis.width}
               imageHeight={analysis.height}
               bands={bands}
+              onPick={setZoom}
             />
           </div>
+          {zoom && (
+            <Lightbox
+              src={sliceUrl(
+                analysis.id,
+                analysis.axis,
+                zoom.from,
+                zoom.to,
+                zoom.index,
+                settings.format,
+                settings.quality,
+              )}
+              name={pieceName(analysis.filename, zoom.index, extFor(settings.format))}
+              label={`${zoom.index + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoom)}`}
+              onClose={() => setZoom(null)}
+            />
+          )}
           {isIOS() && !shareAvailable && (
             <p className="text-xs text-amber-300">
               此浏览器不支持把图片直接写入相册，请用 Safari 打开后重试。
