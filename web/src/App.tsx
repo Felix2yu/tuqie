@@ -8,6 +8,7 @@ import Rail from './components/Rail';
 import Stage from './components/Stage';
 import {
   MIN_PIECE_PX,
+  applyMove,
   axisLength,
   bandLabel,
   bandsFromCuts,
@@ -49,6 +50,9 @@ export default function App() {
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [removed, setRemoved] = useState<number[]>([]);
   const [manual, setManual] = useState<number[]>([]);
+  // Where a line being dragged currently is. Only the released position becomes a
+  // cut: banning every pixel the pointer passed over is how lines went missing.
+  const [drag, setDrag] = useState<{ index: number; pos: number } | null>(null);
   const [splitMode, setSplitMode] = useState<SplitMode>('count');
   const [splitValue, setSplitValue] = useState(4);
   const [skipped, setSkipped] = useState<number[]>([]);
@@ -66,10 +70,16 @@ export default function App() {
   // Every cut position, band and drag is measured along the stitch direction.
   const length = analysis ? axisLength(axis, analysis.width, analysis.height) : 0;
 
-  const cuts = useMemo(
+  const baseCuts = useMemo(
     () => (analysis ? resolveCuts(analysis.candidates, threshold, removed, manual, length) : []),
     [analysis, threshold, removed, manual, length],
   );
+  const cuts = useMemo(() => {
+    if (!drag || drag.index >= baseCuts.length) return baseCuts;
+    const next = [...baseCuts];
+    next[drag.index] = clampCut(drag.pos, baseCuts, drag.index, length);
+    return next;
+  }, [drag, baseCuts, length]);
   const bands = useMemo(() => bandsFromCuts(cuts, length), [cuts, length]);
   const skipSet = useMemo(() => new Set(skipped), [skipped]);
   // Export numbering runs over the kept pieces, so dropping one closes the gap.
@@ -97,6 +107,7 @@ export default function App() {
     setRemoved([]);
     setManual([]);
     setSkipped([]);
+    setDrag(null);
     setStatus(null);
     setUploadError(null);
     setZoom(null);
@@ -114,6 +125,7 @@ export default function App() {
       setRemoved([]);
       setManual([]);
       setSkipped([]);
+      setDrag(null);
       // The uploaded file's own name is the sensible starting prefix.
       setNaming({ prefix: stemOf(res.filename), start: 1 });
       setStatus(null);
@@ -131,14 +143,14 @@ export default function App() {
     setStatus(null);
   };
 
-  const moveCut = (index: number, pos: number) => {
-    const old = cuts[index];
-    if (old === undefined) return;
-    const next = clampCut(pos, cuts, index, length);
-    if (next === old) return;
-    // The line the user dragged away from must not reappear on the next render.
-    setRemoved((r) => (r.includes(old) ? r : [...r, old]));
-    setManual((m) => normalize([...m.filter((v) => v !== old), next], length));
+  const moveCut = (index: number, pos: number) => setDrag({ index, pos });
+
+  const commitCut = (index: number, pos: number) => {
+    setDrag(null);
+    const moved = applyMove(baseCuts, index, pos, length, manual, removed);
+    if (!moved) return;
+    setManual(moved.manual);
+    setRemoved(moved.removed);
   };
 
   const removeCut = (pos: number) => {
@@ -159,6 +171,7 @@ export default function App() {
     setThreshold(1);
     setRemoved([]);
     setManual(next);
+    setDrag(null);
     setStatus({
       tone: 'ok',
       text:
@@ -280,6 +293,7 @@ export default function App() {
             fit={fit}
             onAdd={addCut}
             onMove={moveCut}
+            onCommit={commitCut}
             onRemove={removeCut}
             onViewport={onViewport}
           />
@@ -292,6 +306,7 @@ export default function App() {
             viewport={viewport}
             onAdd={addCut}
             onMove={moveCut}
+            onCommit={commitCut}
           />
         </div>
 

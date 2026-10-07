@@ -11,6 +11,8 @@ type Props = {
   fit: 'fill' | 'page';
   onAdd: (pos: number) => void;
   onMove: (index: number, pos: number) => void;
+  /** The released position of a drag, or a typed one: the only moment a move is kept. */
+  onCommit: (index: number, pos: number) => void;
   onRemove: (pos: number) => void;
   onViewport?: (window: [number, number]) => void;
 };
@@ -24,12 +26,14 @@ export default function Stage({
   fit,
   onAdd,
   onMove,
+  onCommit,
   onRemove,
   onViewport,
 }: Props) {
   const img = useRef<HTMLImageElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
+  const dragTo = useRef<number | null>(null);
   const [pageBox, setPageBox] = useState<{ w: number; h: number } | null>(null);
   const [edit, setEdit] = useState<{ index: number; text: string } | null>(null);
 
@@ -110,8 +114,25 @@ export default function Stage({
     const digits = edit.text.match(/\d+/);
     const index = edit.index;
     setEdit(null);
-    if (digits) onMove(index, Number(digits[0]));
+    if (digits) onCommit(index, Number(digits[0]));
   };
+
+  // Capture can fail on a pointer the browser already released, and then a finger
+  // lifted outside the strip would leave the previewed line uncommitted.
+  useEffect(() => {
+    if (drag === null) return;
+    const end = () => {
+      if (dragTo.current !== null) onCommit(drag, dragTo.current);
+      dragTo.current = null;
+      setDrag(null);
+    };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+    return () => {
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+    };
+  }, [drag, onCommit]);
 
   // A pointer that has already been released makes setPointerCapture throw.
   const capture = (e: React.PointerEvent) => {
@@ -153,12 +174,23 @@ export default function Stage({
                   e.preventDefault();
                   capture(e);
                   setDrag(i);
+                  dragTo.current = null;
                 }}
                 onPointerMove={(e) => {
-                  if (drag === i) onMove(i, posAt(e.clientX, e.clientY));
+                  if (drag !== i) return;
+                  dragTo.current = posAt(e.clientX, e.clientY);
+                  onMove(i, dragTo.current);
                 }}
-                onPointerUp={() => setDrag(null)}
-                onPointerCancel={() => setDrag(null)}
+                onPointerUp={() => {
+                  if (dragTo.current !== null) onCommit(i, dragTo.current);
+                  dragTo.current = null;
+                  setDrag(null);
+                }}
+                onPointerCancel={() => {
+                  if (dragTo.current !== null) onCommit(i, dragTo.current);
+                  dragTo.current = null;
+                  setDrag(null);
+                }}
               >
                 <div
                   className={`absolute ${

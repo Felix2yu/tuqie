@@ -12,15 +12,17 @@ type Props = {
   viewport: [number, number];
   onAdd: (pos: number) => void;
   onMove: (index: number, pos: number) => void;
+  onCommit: (index: number, pos: number) => void;
 };
 
 const HIT_PX = 12;
 
 /** Navigator strip: line-to-line activity for the whole screenshot at once. */
-export default function Rail({ axis, length, signal, cuts, candidates, viewport, onAdd, onMove }: Props) {
+export default function Rail({ axis, length, signal, cuts, candidates, viewport, onAdd, onMove, onCommit }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [drag, setDrag] = useState<number | null>(null);
+  const dragTo = useRef<number | null>(null);
 
   // The profile runs along the strip's long side: down for rows, across for columns.
   const along = axis === 'x';
@@ -132,6 +134,24 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
     return best;
   };
 
+  const endDrag = () => {
+    if (drag !== null && dragTo.current !== null) onCommit(drag, dragTo.current);
+    dragTo.current = null;
+    setDrag(null);
+  };
+
+  // Capture can fail on a pointer the browser already released, and then a finger
+  // lifted outside the rail would leave the previewed line uncommitted.
+  useEffect(() => {
+    if (drag === null) return;
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
+    return () => {
+      window.removeEventListener('pointerup', endDrag);
+      window.removeEventListener('pointercancel', endDrag);
+    };
+  });
+
   return (
     <div
       ref={box}
@@ -149,14 +169,20 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
         }
         const pos = posAt(e.clientX, e.clientY);
         const i = nearestCut(pos);
-        if (i >= 0) setDrag(i);
-        else onAdd(pos);
+        if (i >= 0) {
+          setDrag(i);
+          dragTo.current = null;
+        } else {
+          onAdd(pos);
+        }
       }}
       onPointerMove={(e) => {
-        if (drag !== null) onMove(drag, posAt(e.clientX, e.clientY));
+        if (drag === null) return;
+        dragTo.current = posAt(e.clientX, e.clientY);
+        onMove(drag, dragTo.current);
       }}
-      onPointerUp={() => setDrag(null)}
-      onPointerCancel={() => setDrag(null)}
+      onPointerUp={endDrag}
+      onPointerCancel={endDrag}
     >
       <canvas ref={canvas} className="block h-full w-full" />
       <span

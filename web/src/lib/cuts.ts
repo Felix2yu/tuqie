@@ -96,6 +96,43 @@ export function clampCut(pos: number, cuts: number[], index: number, length: num
   return Math.min(Math.max(Math.round(pos), Math.min(lo, hi)), Math.max(lo, hi));
 }
 
+/**
+ * What a drag that ended on `pos` means for the two lists the lines are built
+ * from. The detected line the user moved away from has to stay out of the way,
+ * and the position the line lands on has to stop being one they deleted —
+ * otherwise dragging one line onto the spot another one came from loses both.
+ * Returns null when the line did not actually move.
+ */
+export function applyMove(
+  cuts: number[],
+  index: number,
+  pos: number,
+  length: number,
+  manual: number[],
+  removed: number[],
+): { manual: number[]; removed: number[] } | null {
+  const old = cuts[index];
+  if (old === undefined) return null;
+  const next = clampCut(pos, cuts, index, length);
+  if (next === old) return null;
+  // A position the user invented is simply left behind. Only a detected line gets
+  // banned, and banning it by position is what keeps the threshold from putting it
+  // back the moment the drag ends.
+  const leftIsManual = manual.includes(old);
+  const kept = removed.filter((p) => p !== next);
+  // Landing on a deleted detection brings that one back, so the dragged line does
+  // not also need its own entry there — writing both would show two lines where
+  // the user sees one, and the next drag would leave the resurrected one behind.
+  const resurrects = kept.length !== removed.length;
+  return {
+    manual: normalize(
+      [...manual.filter((p) => p !== old && p !== next), ...(resurrects ? [] : [next])],
+      length,
+    ),
+    removed: !leftIsManual && !kept.includes(old) ? [...kept, old] : kept,
+  };
+}
+
 export function positionOf(pos: number, length: number): number {
   return length <= 0 ? 0 : (pos / length) * 100;
 }
