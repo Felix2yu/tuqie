@@ -63,9 +63,11 @@ test 通过后还有两个统一 job：`image`（reusable-image，静态编译 `
 以 `-ldflags "-X main.version=<tag>"` 注入版本号，供 `-version` 打印）。
 
 覆盖率走 `go test -covermode=atomic -coverprofile=coverage.out ./...` 再交给 Codecov。
-实测：全部包 75.1%（detect 94.6%、server 91.6%、store 90.2%、split 88.2%、axis 100%）。
-闸门策略在 `codecov.yml`：project 看存量基线（`target: auto` + informational），
-patch 要求新增代码 80%。本地同样一条命令就能看总数：
+实测：全部包 93.7%（axis / split / detect / web 100%，store 97.7%、server 94.8%）。
+剩下的缺口是两类：两个 `package main` 的 flag 解析外壳（`cmd/tuqie` 65.4%、
+`tools/gensample` 80.2%，逻辑都抽进了可测的 `run` / `generate`），以及写缓冲不可能失败的
+防御分支（如 `zip.Create`、`png.Encode`）。闸门策略在 `codecov.yml`：project 看存量基线
+（`target: auto` + informational），patch 要求新增代码 80%。本地同样一条命令就能看总数：
 
 ```sh
 go test -count=1 -covermode=atomic -coverprofile=coverage.out ./... && go tool cover -func=coverage.out | tail -1

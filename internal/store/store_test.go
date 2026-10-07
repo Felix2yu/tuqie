@@ -288,3 +288,115 @@ func TestFormatMime(t *testing.T) {
 		}
 	}
 }
+
+func TestNewRejectsUnusableDir(t *testing.T) {
+	// A regular file standing where the data directory should be.
+	blocker := filepath.Join(t.TempDir(), "occupied")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(filepath.Join(blocker, "tuqie"), time.Minute); err == nil {
+		t.Fatal("MkdirAll failure should reach the caller")
+	}
+}
+
+// errReader fails after handing out a few bytes, the way a dropped upload does.
+type errReader struct{ left int }
+
+func (r *errReader) Read(p []byte) (int, error) {
+	if r.left <= 0 {
+		return 0, os.ErrClosed
+	}
+	n := min(r.left, len(p))
+	for i := 0; i < n; i++ {
+		p[i] = 'x'
+	}
+	r.left -= n
+	return n, nil
+}
+
+func TestPutCleansUpAfterAFailedCopy(t *testing.T) {
+	s := newStore(t, time.Hour)
+	if _, err := s.Put(&errReader{left: 4096}, "shot.png"); err == nil {
+		t.Fatal("a truncated upload should fail")
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("a partial upload should be removed, dir has %d files", len(entries))
+	}
+}
+
+func TestPutCleansUpWhenTheDirIsGone(t *testing.T) {
+	s := newStore(t, time.Hour)
+	// The directory disappearing mid-life (an OS temp cleaner, a container
+	// restart) has to surface as an error, not a stray file handle.
+	os.RemoveAll(s.dir)
+	if _, err := s.Put(bytes.NewReader(pngBytes(t, 2, 2)), "shot.png"); err == nil {
+		t.Fatal("Create failure should reach the caller")
+	}
+}
+
+func TestPutRejectsImageWithNoDimensions(t *testing.T) {
+	s := newStore(t, time.Hour)
+	_, err := s.Put(bytes.NewReader(hugeGIFHeader(t, 0, 0)), "zero.gif")
+	if err == nil || !strings.Contains(err.Error(), "no dimensions") {
+		t.Fatalf("want the no-dimensions rejection, got %v", err)
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("rejected upload should be removed, dir has %d files", len(entries))
+	}
+}
+
+func TestImageReportsUndecodableFile(t *testing.T) {
+	s := newStore(t, time.Hour)
+	// A GIF header is enough for DecodeConfig but not for a full decode, so Put
+	// accepts it and Image is where the damage shows up.
+	p := put(t, s, hugeGIFHeader(t, 200, 200), "header.gif")
+	if _, err := p.Image(); err == nil || !strings.Contains(err.Error(), "decode") {
+		t.Fatalf("want a decode error, got %v", err)
+	}
+}
+
+func TestReadConfigMissingFile(t *testing.T) {
+	if _, _, err := readConfig(filepath.Join(t.TempDir(), "gone.png")); err == nil {
+		t.Fatal("reading a vanished file should fail")
+	}
+}
+
+func TestSanitize(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"shot.png", "shot.png"},
+		{"/etc/passwd", "passwd"},
+		{"..\\..\\evil.png", ".._.._evil.png"},
+		{"中文截图.PNG", "____.PNG"},
+		{"a b\tc.png", "a_b_c.png"},
+		{strings.Repeat("x", 200) + ".png", strings.Repeat("x", 120)},
+		{".", "screenshot"},
+		{"", "screenshot"},
+	}
+	for _, c := range cases {
+		got := sanitize(c.in)
+		if got != c.want {
+			t.Errorf("sanitize(%q) = %q, want %q", c.in, got, c.want)
+		}
+		if len(got) > 120 {
+			t.Errorf("sanitize(%q) = %q, longer than 120", c.in, got)
+		}
+	}
+}
+
+func TestIdleFor(t *testing.T) {
+	p := &Picture{used: time.Now().Add(-3 * time.Second)}
+	if d := p.idleFor(time.Now()); d < 2*time.Second || d > 5*time.Second {
+		t.Fatalf("idleFor = %s", d)
+	}
+}

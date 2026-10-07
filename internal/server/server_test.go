@@ -372,3 +372,168 @@ func TestStaticFrontend(t *testing.T) {
 		t.Fatalf("body %q", body)
 	}
 }
+
+// ---- failure paths ----
+
+// failWriter stands in for a client that hangs up mid-response.
+type failWriter struct {
+	header http.Header
+	writes int
+}
+
+func (f *failWriter) Header() http.Header {
+	if f.header == nil {
+		f.header = http.Header{}
+	}
+	return f.header
+}
+
+func (f *failWriter) Write(p []byte) (int, error) {
+	f.writes++
+	return 0, os.ErrClosed
+}
+
+func (f *failWriter) WriteHeader(int) {}
+
+func TestAnalyzeRejectsUndecodableUpload(t *testing.T) {
+	handler, _ := newHandler(t)
+	// A GIF header is enough for the dimension probe, so Put takes it and the
+	// full decode is where it falls apart.
+	header := []byte("GIF89a" + string([]byte{8, 0, 8, 0, 0, 0, 0}))
+	rec := postMultipart(t, handler, "/api/analyze", "file", "broken.gif", header)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("undecodable gif: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(decodeError(t, rec), "decode") {
+		t.Fatalf("body %s", rec.Body.String())
+	}
+}
+
+func TestImageSurvivesADroppedClient(t *testing.T) {
+	st, err := store.New(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(st, fstest.MapFS{})
+
+	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &failWriter{}
+	req := httptest.NewRequest(http.MethodGet, "/api/image?id="+p.ID, nil)
+	s.handleImage(w, req) // must log and return, not panic
+	if w.writes == 0 {
+		t.Fatal("nothing was written, so the copy never ran")
+	}
+}
+
+func TestExportNamesFilesAfterTheScreenshotWithoutAStem(t *testing.T) {
+	handler, st := newHandler(t)
+	p, err := st.Put(bytes.NewReader(testPNG(t, 10, 20)), ".png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"id": p.ID, "axis": "y", "cuts": []int{8}, "format": "png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/export", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export %d: %s", rec.Code, rec.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+	}
+	want := []string{"screenshot-01.png", "screenshot-02.png"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("entries %v, want %v", names, want)
+	}
+	if got := rec.Header().Get("Content-Disposition"); got != `attachment; filename="screenshot-slices.zip"` {
+		t.Fatalf("disposition %q", got)
+	}
+}
+
+func TestExportSurvivesADroppedClient(t *testing.T) {
+	st, err := store.New(t.TempDir(), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := New(st, fstest.MapFS{})
+
+	// One band has to be big enough that the zip flushes while writing it,
+	// which is when the dead client shows up.
+	p, err := st.Put(bytes.NewReader(testPNG(t, 200, 2000)), "shot.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"id": p.ID, "axis": "y", "cuts": []int{100}, "format": "png",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &failWriter{}
+	req := httptest.NewRequest(http.MethodPost, "/api/export", bytes.NewReader(body))
+	s.handleExport(w, req) // must log and return, not panic
+	if w.writes == 0 {
+		t.Fatal("the zip never reached the writer")
+	}
+}
+
+func TestWriteJSONReportsUnencodableValues(t *testing.T) {
+	w := httptest.NewRecorder()
+	writeJSON(w, map[string]any{"ch": make(chan int)})
+	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Fatalf("content-type %q", ct)
+	}
+	// The failure is logged, not returned; the caller has already committed 200.
+	if w.Body.String() != "" {
+		t.Fatalf("body %q", w.Body.String())
+	}
+}
+
+func TestPickFormatAndHelpers(t *testing.T) {
+	cases := []struct {
+		raw, rawQ string
+		format    string
+		quality   int
+	}{
+		{"png", "80", "png", 80},
+		{"jpeg", "150", "jpeg", 92}, // out of range falls back
+		{"jpeg", "49", "jpeg", 92},  // below the floor falls back
+		{"jpeg", "", "jpeg", 92},    // absent falls back
+		{"webp", "abc", "jpeg", 92}, // anything not png is jpeg
+		{"", "100", "jpeg", 100},
+	}
+	for _, c := range cases {
+		f, q := pickFormat(c.raw, c.rawQ)
+		if f != c.format || q != c.quality {
+			t.Errorf("pickFormat(%q,%q) = (%q,%d), want (%q,%d)", c.raw, c.rawQ, f, q, c.format, c.quality)
+		}
+	}
+
+	if got := mimeFor("png"); got != "image/png" {
+		t.Errorf("mimeFor(png) = %q", got)
+	}
+	if got := mimeFor("jpg"); got != "image/jpeg" {
+		t.Errorf("mimeFor(jpg) = %q", got)
+	}
+
+	for _, bad := range []string{"", "x", "-1"} {
+		if _, err := atoi(bad); err == nil {
+			t.Errorf("atoi(%q) should fail", bad)
+		}
+	}
+	if n, err := atoi("42"); err != nil || n != 42 {
+		t.Errorf("atoi(42) = %d, %v", n, err)
+	}
+}

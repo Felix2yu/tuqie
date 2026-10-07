@@ -99,3 +99,56 @@ func TestEncodeRoundTrip(t *testing.T) {
 		t.Fatal("unknown format should error")
 	}
 }
+
+func TestEncodeFallsBackToDefaultQuality(t *testing.T) {
+	// The client owns the quality query parameter, so out-of-range values must
+	// still produce a sane JPEG rather than a 0-quality failure.
+	src := gradient(16, 24)
+	for _, q := range []int{0, -1, 101, 1000} {
+		var buf bytes.Buffer
+		if err := Encode(&buf, src, FormatJPEG, q); err != nil {
+			t.Fatalf("quality %d: %v", q, err)
+		}
+		if _, err := jpeg.Decode(&buf); err != nil {
+			t.Fatalf("quality %d decode: %v", q, err)
+		}
+	}
+	var ref bytes.Buffer
+	if err := Encode(&ref, src, FormatJPEG, 92); err != nil {
+		t.Fatal(err)
+	}
+	var clamped bytes.Buffer
+	if err := Encode(&clamped, src, FormatJPEG, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(ref.Bytes(), clamped.Bytes()) {
+		t.Fatal("out-of-range quality should be replaced by the 92 default")
+	}
+}
+
+func TestExt(t *testing.T) {
+	cases := map[string]string{
+		FormatJPEG: "jpg",
+		FormatPNG:  "png",
+		"tiff":     "png",
+		"":         "png",
+	}
+	for format, want := range cases {
+		if got := Ext(format); got != want {
+			t.Fatalf("Ext(%q) = %q, want %q", format, got, want)
+		}
+	}
+}
+
+func TestClamp(t *testing.T) {
+	cases := []struct{ v, lo, hi, want int }{
+		{5, 0, 10, 5},
+		{-1, 0, 10, 0},
+		{11, 0, 10, 10},
+	}
+	for _, c := range cases {
+		if got := clamp(c.v, c.lo, c.hi); got != c.want {
+			t.Fatalf("clamp(%d,%d,%d) = %d, want %d", c.v, c.lo, c.hi, got, c.want)
+		}
+	}
+}

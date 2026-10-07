@@ -4,6 +4,7 @@ import (
 	"image"
 	"image/color"
 	"math/rand"
+	"reflect"
 	"testing"
 	"time"
 
@@ -241,4 +242,207 @@ func positions(c []Candidate) []int {
 		out[i] = v.Pos
 	}
 	return out
+}
+
+// ---- internals ----
+
+// smallStitched is the same fixture as the Analyze tests at a size that makes
+// direct calls into the helpers cheap.
+func smallStitched() *image.RGBA {
+	return stitched(40, []int{120, 90, 150}, 8, 5, axis.Y)
+}
+
+func TestAnalyzeAppliesDefaultsToZeroOptions(t *testing.T) {
+	// Every field left at its zero value must fall back to DefaultOptions, not
+	// turn into "nothing passes the threshold".
+	res := Analyze(smallStitched(), Options{})
+	want := seamCenters([]int{120, 90, 150}, 8)
+	if len(res.Candidates) != len(want) {
+		t.Fatalf("got %v, want %v", positions(res.Candidates), want)
+	}
+}
+
+func TestAnalyzeHonoursSensitivityOverrides(t *testing.T) {
+	// A line loud enough to clear AbsThresh but not its neighbourhood still
+	// fails: relative evidence is what rejects a photo's own busy texture.
+	strict := Options{AbsThresh: 0.001, RelThresh: 1e9, MaxCandidates: 80, SamplePerLine: 20}
+	if got := Analyze(smallStitched(), strict).Candidates; len(got) != 0 {
+		t.Fatalf("relative threshold should reject everything, got %v", positions(got))
+	}
+
+	// With the floor dropped every jump qualifies, so MaxCandidates bounds the
+	// list and MinSlicePx decides how close two cuts may sit.
+	loose := Options{AbsThresh: 0.02, RelThresh: 1, MinSlicePx: 1, MaxCandidates: 2, SamplePerLine: 20}
+	got := Analyze(smallStitched(), loose).Candidates
+	if len(got) != 2 {
+		t.Fatalf("got %v, want the list truncated to 2", positions(got))
+	}
+}
+
+func TestAnalyzeAcceptsOtherImageFormats(t *testing.T) {
+	src := smallStitched()
+	// A JPEG decode hands over YCbCr and a GIF hands over Paletted, so neither
+	// is the *image.RGBA fast path.
+	grey := image.NewGray(src.Bounds())
+	for y := 0; y < src.Rect.Dy(); y++ {
+		for x := 0; x < src.Rect.Dx(); x++ {
+			grey.SetGray(x, y, color.Gray{Y: src.RGBAAt(x, y).R})
+		}
+	}
+	res := Analyze(grey, DefaultOptions())
+	want := seamCenters([]int{120, 90, 150}, 8)
+	if len(res.Candidates) != len(want) {
+		t.Fatalf("non-RGBA input got %v, want %v", positions(res.Candidates), want)
+	}
+
+	// Offset origins must not shift the profiles.
+	shifted := image.NewRGBA(image.Rect(4, 6, 4+src.Rect.Dx(), 6+src.Rect.Dy()))
+	for y := 0; y < src.Rect.Dy(); y++ {
+		for x := 0; x < src.Rect.Dx(); x++ {
+			shifted.SetRGBA(4+x, 6+y, src.RGBAAt(x, y))
+		}
+	}
+	res = Analyze(shifted, DefaultOptions())
+	if got := positions(res.Candidates); len(got) != len(want) {
+		t.Fatalf("offset origin got %v, want %v", got, want)
+	}
+	for i, c := range res.Candidates {
+		if absInt(c.Pos-want[i]) > 8 {
+			t.Errorf("offset origin seam %d at %d, want near %d", i, c.Pos, want[i])
+		}
+	}
+}
+
+func TestSamplePoints(t *testing.T) {
+	cases := []struct {
+		n, cap int
+		want   []int
+	}{
+		{4, 10, []int{0, 1, 2, 3}},
+		{3, 0, []int{0, 1, 2}},
+		{3, -1, []int{0, 1, 2}},
+		{0, 10, []int{}},
+		{10, 4, []int{0, 3, 6, 9}},
+	}
+	for _, c := range cases {
+		got := samplePoints(c.n, c.cap)
+		if len(got) != len(c.want) {
+			t.Fatalf("samplePoints(%d,%d) = %v, want %v", c.n, c.cap, got, c.want)
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Fatalf("samplePoints(%d,%d) = %v, want %v", c.n, c.cap, got, c.want)
+			}
+			if i > 0 && got[i] <= got[i-1] {
+				t.Fatalf("samplePoints(%d,%d) = %v, not increasing", c.n, c.cap, got)
+			}
+		}
+	}
+}
+
+func TestSmoothIgnoresShortInputs(t *testing.T) {
+	short := []float64{1, 2}
+	smooth(short)
+	if !reflect.DeepEqual(short, []float64{1, 2}) {
+		t.Fatalf("a 2-line profile was rewritten: %v", short)
+	}
+	long := []float64{0, 3, 0}
+	smooth(long)
+	if long[1] != 1 {
+		t.Fatalf("expected the 3-tap average, got %v", long)
+	}
+}
+
+func TestSnapToFlatBand(t *testing.T) {
+	// A band is plain when flat == 1 and calm when its diff stays near zero.
+	plain := func(n int) []float64 {
+		v := make([]float64, n)
+		for i := range v {
+			v[i] = 0.5
+		}
+		return v
+	}
+
+	t.Run("centre of a padded band", func(t *testing.T) {
+		length := 100
+		flat, diff := plain(length), make([]float64, length)
+		for i := 47; i <= 51; i++ {
+			flat[i] = 1
+		}
+		pos, blank := snapToFlatBand(flat, diff, 45, length, 10)
+		if !blank || pos != 49 {
+			t.Fatalf("got (%d,%v), want the band centre 49", pos, blank)
+		}
+	})
+
+	t.Run("too thin to be padding", func(t *testing.T) {
+		length := 100
+		flat, diff := plain(length), make([]float64, length)
+		flat[49], flat[50] = 1, 1
+		if pos, blank := snapToFlatBand(flat, diff, 48, length, 10); blank || pos != 48 {
+			t.Fatalf("got (%d,%v), want the position untouched", pos, blank)
+		}
+	})
+
+	t.Run("too wide is sky, not a seam", func(t *testing.T) {
+		length := 400
+		flat, diff := plain(length), make([]float64, length)
+		for i := 10; i < 340; i++ {
+			flat[i] = 1
+		}
+		if pos, blank := snapToFlatBand(flat, diff, 100, length, 10); blank || pos != 100 {
+			t.Fatalf("got (%d,%v), want the position untouched", pos, blank)
+		}
+	})
+
+	t.Run("busy inside is a photo edge", func(t *testing.T) {
+		length := 100
+		flat, diff := plain(length), make([]float64, length)
+		for i := 47; i <= 51; i++ {
+			flat[i] = 1
+		}
+		diff[49] = 0.5
+		if pos, blank := snapToFlatBand(flat, diff, 45, length, 10); blank || pos != 45 {
+			t.Fatalf("got (%d,%v), want the position untouched", pos, blank)
+		}
+	})
+
+	t.Run("nothing plain nearby", func(t *testing.T) {
+		length := 100
+		flat, diff := plain(length), make([]float64, length)
+		if pos, blank := snapToFlatBand(flat, diff, 50, length, 4); blank || pos != 50 {
+			t.Fatalf("got (%d,%v), want the position untouched", pos, blank)
+		}
+	})
+
+	// A peak at the very first line has no window on one side; the scan must
+	// step over the out-of-range candidates instead of reading them.
+	t.Run("clips to the image", func(t *testing.T) {
+		length := 100
+		flat, diff := plain(length), make([]float64, length)
+		for i := 1; i <= 5; i++ {
+			flat[i] = 1
+		}
+		pos, blank := snapToFlatBand(flat, diff, 0, length, 10)
+		if !blank || pos != 3 {
+			t.Fatalf("got (%d,%v), want 3", pos, blank)
+		}
+	})
+}
+
+func TestEvidencePrefersManyConfidentLines(t *testing.T) {
+	// Only the part above the 0.4 confidence floor counts, and every confident
+	// line adds to it: several strong reads beat one mediocre line.
+	mediocre := Result{Candidates: []Candidate{{Score: 0.5}}}
+	confident := Result{Candidates: []Candidate{{Score: 0.7}, {Score: 0.7}}}
+	if !(evidence(confident) > evidence(mediocre)) {
+		t.Fatalf("2x0.7 (%.2f) should outweigh 1x0.5 (%.2f)", evidence(confident), evidence(mediocre))
+	}
+	// Below the floor a line says nothing, however many there are.
+	if got := evidence(Result{Candidates: []Candidate{{Score: 0.4}, {Score: 0.2}}}); got != 0 {
+		t.Fatalf("below-confidence evidence = %.2f, want 0", got)
+	}
+	if got := evidence(Result{}); got != 0 {
+		t.Fatalf("empty result = %.2f, want 0", got)
+	}
 }
