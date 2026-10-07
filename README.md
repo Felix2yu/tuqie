@@ -3,6 +3,7 @@
 把拼成长图的截图拆回一张张独立照片：自动识别拼接处的分割线，允许手动增删与拖动，
 拆出来的图可以一键存进 iOS 相册，或打包成 ZIP 下载到本地。
 输出的图片会保留原图的拍摄时间（读不到就用浏览器上报的文件修改时间），相册里不会全部挤成"刚刚"。
+手机照片自带的旋转标记也会被读进来：你看到的，就是切出来的方向。
 
 Go 单二进制 + 内嵌前端，没有数据库，不需要外部服务。竖着往下拼和横着往右拼的长图都会自动判方向。
 
@@ -29,7 +30,9 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 ```
 
 其他参数：`-addr :7423` 监听地址，`-data` 上传目录（默认 `$TMPDIR/tuqie`），
-`-ttl 60m` 原图保留时长，`-version` 打印版本号（CI 构建注入，本地为 `dev`）。
+`-ttl 60m` 原图保留时长，`-password` 给整个站点加一道密码（见「放到别人够得着的地方」），
+`-uploads-per-minute 30` 单个客户端每分钟能上传几张（0 为不限），
+`-version` 打印版本号（CI 构建注入，本地为 `dev`）。
 
 ## 容器化部署
 
@@ -52,6 +55,15 @@ docker run --rm tuqie -ttl 10m
 `/data` 里是上传的原图，`-ttl` 到期即删，用命名卷即可、不必备份；改成宿主目录 bind mount 时，
 要让容器里的非 root 用户 `tuqie` 对它可写。存相册那一步依然要求 HTTPS，见下一节。
 
+### 放到别人够得着的地方
+
+`-password 一道密码` 会给所有请求挂上 HTTP Basic 认证，页面本身也算，浏览器弹一次就记住后面所有调用。
+用户名不校验，只比这一道密码，比较走常数时间。限速只管 `/api/analyze`：默认每分钟 30 张，
+桶是满的开始，所以开头能连着传 7 张（突发上限取每分钟额度的四分之一，不低于 6），之后每两秒回一张；
+超了就 429 并带上 `Retry-After`。计的是 TCP 对端地址，挂在反向代理后面时访客都并入代理那一个，
+那种部署请把限速放到代理上做。试的时候让浏览器自己弹认证框：把账号写进地址栏
+（`http://user:pass@host`）虽然能打开页面，Chrome 却会拒绝这个页面发出的 fetch，上传直接报错。
+
 ## CI 与覆盖率
 
 `.github/workflows/ci.yml` 只是薄调用层，构建 / 测试 / Codecov 上报的实现统一在
@@ -64,7 +76,7 @@ test 通过后还有两个统一 job：`image`（reusable-image，静态编译 `
 以 `-ldflags "-X main.version=<tag>"` 注入版本号，供 `-version` 打印）。
 
 覆盖率走 `go test -covermode=atomic -coverprofile=coverage.out ./...` 再交给 Codecov。
-实测：全部包 93.7%（axis / split / detect / web 100%，store 97.7%、server 94.8%）。
+实测：全部包 91.7%（axis / detect / web 100%，split 95.2%、server 94.4%、store 91.6%）。
 剩下的缺口是两类：两个 `package main` 的 flag 解析外壳（`cmd/tuqie` 65.4%、
 `tools/gensample` 80.2%，逻辑都抽进了可测的 `run` / `generate`），以及写缓冲不可能失败的
 防御分支（如 `zip.Create`、`png.Encode`）。闸门策略在 `codecov.yml`：project 看存量基线
@@ -87,8 +99,9 @@ Codecov 本身不参与闸门（上报失败不会让 CI 变红），但它需�
 - 用 Safari 打开，点「存入相册 · N 张」，在弹出的分享面板里选「存储图像」。
 - 需要 HTTPS 或 localhost。局域网访问请给 `-addr` 前面挂一层 HTTPS（如 caddy），
   否则 `navigator.share` 不会启用。
-- 从相册选图上传时，iOS 会自动把 HEIC 转成 JPEG，后端不需要解码 HEIC。
-- 不支持文件分享的浏览器（桌面 Chrome/Safari）会自动退化成逐张下载，右侧 ZIP 按钮始终可用。
+- 手机拍的 HEIC 可以直接上传，不用先在相册里转成 JPEG；AVIF、JXL 同样收得下。
+- 不支持文件分享的浏览器（桌面 Chrome/Safari）主按钮就是 ZIP；「逐张」是备用的散装下载，
+  浏览器可能会先弹一次「是否允许下载多个文件」。
 
 ## 分割线是怎么定出来的
 
@@ -109,6 +122,19 @@ Codecov 本身不参与闸门（上报失败不会让 CI 变红），但它需�
 默认 0.45 只保留有把握的线，往下拖会露出被压住的候选（灰色细线画在强度条上），
 往上拖则清空，交给用户手动画。
 
+识别不到接缝的长图（整篇聊天记录就是这种）用「切分」那一行：等分成 N 份，或每段固定 H px，
+应用后替换掉识别结果，按数值重排切割线；按钮上先写出实际会得到的张数，因为过近的线会被合并。
+每条线上的编号点一下可以输入精确像素位置（"1200px" 这样的写法也认），越界或挤到相邻线时
+夹到最近可用处，最小间距 30px。
+
+切片预览每张右上角的 `−` 把它排除出这次导出，再点回来；编号只数留下的那些，所以相册里的顺序
+不会留空洞。「命名」那一行管文件名：前缀默认取上传文件的名字，起始编号可以填 0 也可以填 98，
+位数按最后一张自动补零（`会话-098 … 会话-100`），前缀里的 `/ \ : "` 和控制字符换成 `_`，
+首尾的点号与空格会被去掉。
+
+工作视图也不用把整张原图搬进浏览器：30MP 的长图（32MB PNG）在服务器上按盒式滤波缩成 4MP 的 JPEG，只剩 723KB，
+第一次请求花 140ms 生成、之后走缓存，导出的切片仍然取自原图像素。
+
 实测（合成图，两个方向各跑一遍）：1080×21600 约 127ms，1080×3707 约 32ms，3691×900 约 7ms；
 1080×21600 单向时是 29ms，多出来的是横向扫描的代价，换来横排竖排都不用用户选。
 4 张拼接的样例：纵排 807/1750/2797、横排 805/1744/2787，与生成器给出的真值都差 1px，
@@ -119,11 +145,64 @@ Codecov 本身不参与闸门（上报失败不会让 CI 变红），但它需�
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
 | POST | `/api/analyze` | multipart `file`，返回尺寸、`axis`（`y`/`x`）、候选线（`pos` 沿该轴）、强度信号 |
-| GET | `/api/image?id=` | 原图，前端预览与切片缩略图都用它 |
-| GET | `/api/slice?id=&axis=&from=&to=&index=&format=&quality=` | 单张切片，供分享前组装 File |
-| POST | `/api/export` | `{id,axis,cuts,format,quality}` → ZIP 流 |
+| GET | `/api/image?id=` | 原图，切片缩略图与工作视图都用它 |
+| GET | `/api/preview?id=` | 缩放后的工作图：超过 4MP 或长边过 8192 的上传，第一次请求时按盒式滤波降采样存盘，之后直接读缓存；小图原样返回。浏览器画不出来的上传（HEIC / JXL）不管多大都渲一份 JPEG |
+| GET | `/api/slice?id=&axis=&from=&to=&index=&format=&quality=` | 单张切片，`format` 取 jpeg / png / heic / avif / jxl，供分享前组装 File |
+| POST | `/api/export` | `{id,axis,cuts,skip,prefix,start,format,quality}` → ZIP 流，`skip` 是要排除的切片下标 |
 
-上传限制 250MB、像素上限 120MP，支持 PNG / JPEG / GIF。
+上传限制 250MB、像素上限 120MP，支持 PNG / JPEG / GIF / HEIC / AVIF / JXL（见「图片格式」），剪贴板里的截图可以直接 ⌘V / Ctrl+V 贴进来。
+
+EXIF 里有两样东西会被读进来：拍摄时间写回每张切片（JPEG 走 APP1、PNG 走 eXIf 块、HEIC 走 Exif item，
+AVIF 与 JXL 由我们在编码后补进容器，见「输出各档的实测」），Orientation 决定方向。带旋转标记的上传，`/api/analyze` 报的是正立后的宽高，`/api/image` 仍按原始字节发送（浏览器自己会转），
+切片则是已经转正的像素——预览、缩略图与导出用的是同一个坐标系。
+
+## 图片格式
+
+输入认 PNG / JPEG / GIF / HEIC / AVIF / JXL，输出五选一：PNG / JPEG / HEIC / AVIF / JXL。
+前三种输入走标准库，后三种各带一个纯 Go 编解码器（`gen2brain/h265`、`gen2brain/avif`、`gen2brain/jxl`），
+`CGO_ENABLED=0` 照旧，交叉编译与镜像都不受影响。
+
+代价写在二进制上（linux/amd64，`-s -w`）：只带标准库时 7.7MB，加上这三个是 13.2MB，多出来的 5.4MB
+里 AVIF 占大头——它的编解码器是编成 WASM 的 libaom，由 `wazero` 在进程里跑，这是纯 Go 路线里唯一能读懂
+libheif 产出的 AVIF 的实现（另一条纯 Go 路线 `goavif` 实测读不出来）；HEIC 与 JXL 两个纯 Go 实现各约 +0.9MB。
+许可随之从"只有标准库"变成 MIT ×2 加 JPEG XL Project 的 Apache-2.0（含专利授权）。
+
+容器格式的方向不只写在 EXIF 里：HEIF/AVIF 把自己该转多少度写在 `irot`，把有效画幅写在 `clap`
+（编码器按 8/16 的块对齐补边，所以解码出来的缓冲常比看到的多出一两行）。`internal/store/aperture.go`
+只走文件头这几 KB，读出这两样，方向优先用 `irot`、没有才退回 EXIF Orientation，画幅在解码后按 `clap` 裁掉。
+少了这一步，一张按块对齐补边的上传方向是对的、画面却整体错开一像素，切出来的每一张都跟着偏。
+
+实测（对着第三方解码器比同一块像素）：HEIC 切片与 libheif 输出 54.7dB，JXL 与官方 `djxl` 54.2dB，
+AVIF 与 `avifdec` 43.1dB（差在色度上采样的取整，不是错位）；裁掉 `clap` 之前 HEIC 只有 25.3dB。
+
+### 输出各档的实测
+
+滑杆留在默认的 90，一张真实照片与一张真实截图（都是 1306×1876），走 `split.Encode` 量的：
+
+| 格式 | 照片 | 截图 | 说明 |
+| --- | --- | --- | --- |
+| JPEG | 243 KB / 40 ms | 361 KB / 76 ms | 谁都能开，默认档 |
+| PNG | 2732 KB / 2.5 s | 1280 KB / 1.7 s | 无损 |
+| HEIC | 19 KB / 0.7 s | 192 KB / 0.8 s | iOS 相册原生收，Chrome 不预览 |
+| AVIF | 77 KB / 2.0 s | 157 KB / 2.6 s | Chrome 能直接显示；单张编码把进程峰值 RSS 顶到 ~600 MB（wazero 不还内存），已用一把锁串行化 |
+| JXL | 74 KB / 0.5 s | 226 KB / 0.5 s | Apple 的 ImageIO 能解，Chrome 不能 |
+
+四条表里看不见的规矩：
+
+- **滑杆的数字不等于编码器的数字。** 各家 quality 标度不可比：直接喂进去，HEIC 在 90 档要花 992 KB 才做到 JPEG 243 KB 的观感。`split` 里给 HEIC / AVIF / JXL 各存一条曲线，五个锚点之间线性插值，取的是"这一档达到 JPEG 在同一滑杆下的 PSNR"（1306×1876 的真实照片 / 真实截图，两档内容各测一遍取平均），所以同一个位置在五种输出里是同一张观感：
+
+  | 滑杆 | JPEG 在该档的 PSNR | HEIC | AVIF | JXL |
+  | --- | --- | --- | --- | --- |
+  | 60 | 40.7 / 37.3 dB | 38 | 38 | 72 |
+  | 70 | 41.2 / 38.1 dB | 44 | 45 | 76 |
+  | 80 | 41.8 / 39.8 dB | 52 | 56 | 83 |
+  | 90 | 42.7 / 42.0 dB | 60 | 76 | 89 |
+  | 100 | 51.1 / 44.9 dB | 83 | 90 | 96 |
+
+  后三列是各编码器自己的 quality 数，不是滑杆位置；JPEG 与 PNG 不吃映射（PNG 本来就无损）。`TestEncoderQualitySpreadsTheSliderAcrossTheScales` 钉住锚点数值，并检查曲线在 60–100 之间不回头。
+- **HEIC 只在两边都是偶数时用 4:2:0。** 编码器把补过边的画面按奇数的显示尺寸写进 `ispe`、却不写 conformance window，libheif 于是报"解出来的尺寸与文件声明不符"直接拒收，而用户切出来的带有一半是奇数高度；这些张改用 4:4:4（真实截图 476→600 KB，真实照片 992→1306 KB，约 +30%；噪声很重的人造图能到四倍）。`TestHeicOfAnOddSliceKeepsItsSize` 拿文件里不该出现的 `clap` 当作这个缺陷的替身。macOS 的 ImageIO 对两种都放行，libheif 只放行 4:4:4，所以按更严的一方写。
+- **五种输出都带拍摄时间。** JPEG 走 APP1、PNG 走 eXIf 块、HEIC 走 Exif item；`avif` 与 `jxl` 的编码器完全不收元数据，所以导出后由 `internal/split` 往容器里补：AVIF 在 mdat 末尾接上 TIFF 并登记进 `iinf` / `iloc` / `iref`，JXL 干脆套一层容器（`JXL ` + `ftyp` + `Exif` + `jxlc`，与 `cjxl` 同形）。AVIF 的 `iref` 要按 libavif 自己的写法来——规范里那个 `reference_count` 会让它把下一个盒的头读歪，整个文件判废。实测 `avifdec` / `heif-convert` / `djxl` 都解得开，`CGImageSourceCopyPropertiesAtIndex` 对五种输出都报出同一个 `DateTimeOriginal`；ZIP 条目时间戳也按拍摄时刻写。
+- `avif.Options` 的 `Speed` 没有零值兜底：`Options{Quality: 90}` 是要 libaom 最慢档（实测一张 4 分钟没出图），所以 `internal/split` 里显式写死 speed 8、JXL effort 4。
 
 ## 目录
 
@@ -131,8 +210,10 @@ Codecov 本身不参与闸门（上报失败不会让 CI 变红），但它需�
 cmd/tuqie        入口
 internal/axis    切割方向（y 竖排 / x 横排）
 internal/detect  方向判定与分割线检测
+internal/exif    读写的 EXIF 字段（拍摄时间、方向）
+internal/preview 工作图的盒式滤波缩放
 internal/split   按轴裁切与编码
-internal/store   上传文件与解码缓存（TTL 回收）
+internal/store   上传文件、容器画幅与方向、解码缓存（TTL 回收）
 internal/server  HTTP 接口
 web/             React + Vite + Tailwind 前端，构建产物被 Go 内嵌
 tools/gensample  生成合成长图，用于手动测试（`-axis x` 出横排）
