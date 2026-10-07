@@ -713,11 +713,10 @@ func TestExportStampsEntriesWithTheSourceDate(t *testing.T) {
 		t.Fatalf("entries %d, want 3", len(zr.File))
 	}
 	for _, f := range zr.File {
-		// Zip times are zone-less, so what has to survive is the camera's wall
-		// clock (09:15:30 in +08:00), which a reader hands back in the local zone.
-		want := time.Date(2026, 10, 7, 9, 15, 30, 0, time.Local)
-		if !f.Modified.Equal(want) {
-			t.Errorf("%s modified %s, want %s", f.Name, f.Modified, want)
+		// A zip entry holds a zone-less wall clock, so what has to survive the round
+		// trip is the camera's own 09:15:30, whichever zone this process runs in.
+		if got := f.Modified.Format("2006-01-02 15:04:05"); got != "2026-10-07 09:15:30" {
+			t.Errorf("%s modified %s, want the source wall clock", f.Name, got)
 		}
 		rc, err := f.Open()
 		if err != nil {
