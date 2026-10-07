@@ -1,16 +1,30 @@
-// Package exif reads and writes the capture date stored in image metadata.
-//
-// Only dates are handled: a re-encoded slice needs the time the original was
-// taken, not the camera's whole metadata block.
+// Package exif reads and writes the metadata an image carries about its own
+// capture: the date it was taken, and which way round the stored pixels are.
+// Nothing else in the metadata block survives a re-encode, and a slice needs
+// neither the camera's settings nor its thumbnail.
 package exif
 
 import (
 	"encoding/binary"
 	"fmt"
+	"hash/crc32"
 	"sort"
 	"strings"
 	"time"
 )
+
+// pngSig is how every PNG file starts; eXIf is the one chunk this package writes.
+var pngSig = []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+
+const chunkEXIf = "eXIf"
+
+// Doc is what an image's metadata block says about the file itself.
+type Doc struct {
+	Taken Date
+	// Orientation is EXIF tag 0x0112: how the stored pixels relate to the shot.
+	// Zero means the file does not say, which every reader takes as upright.
+	Orientation uint16
+}
 
 // Date is a capture timestamp as the camera wrote it. EXIF keeps DateTimeOriginal
 // without a zone, so the wall-clock text is carried verbatim rather than re-parsed
@@ -25,6 +39,7 @@ const wallLayout = "2006:01:02 15:04:05"
 
 // TIFF tags this package cares about.
 const (
+	tagOrientation    = 0x0112
 	tagDateTime       = 0x0132
 	tagExifIFD        = 0x8769
 	tagDateOriginal   = 0x9003
@@ -109,22 +124,27 @@ func (d Date) InZipRange() bool {
 
 // Scan finds the capture date in the leading bytes of an encoded image. It returns
 // the zero Date for formats and files that carry none.
-func Scan(data []byte) Date {
+func Scan(data []byte) Date { return Meta(data).Taken }
+
+// Meta reads the capture date and orientation from the leading bytes of an encoded
+// image. Formats without EXIF, and files with none, come back as the zero Doc.
+func Meta(data []byte) Doc {
 	switch {
 	case hasPrefix(data, []byte{0xff, 0xd8}):
 		return scanJPEG(data)
-	case hasPrefix(data, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}):
+	case hasPrefix(data, pngSig):
 		return scanPNG(data)
 	}
-	return Date{}
+	return Doc{}
 }
 
-func scanJPEG(data []byte) Date {
+func scanJPEG(data []byte) Doc {
+	var seen Doc
 	// Walk the marker segments that sit between SOI and the first scan, and hand
 	// the payload of any Exif APP1 to the TIFF reader.
 	for i := 2; i+1 < len(data); {
 		if data[i] != 0xff {
-			return Date{}
+			return seen
 		}
 		marker := data[i+1]
 		if marker == 0xff { // fill byte before a marker
@@ -132,49 +152,60 @@ func scanJPEG(data []byte) Date {
 			continue
 		}
 		if marker == 0xda || marker == 0xd9 { // scan data: no metadata follows
-			return Date{}
+			return seen
 		}
 		if marker == 0x01 || (marker >= 0xd0 && marker <= 0xd7) { // no payload
 			i += 2
 			continue
 		}
 		if i+4 > len(data) {
-			return Date{}
+			return seen
 		}
 		segLen := int(data[i+2])<<8 | int(data[i+3])
 		if segLen < 2 || i+2+segLen > len(data) {
-			return Date{}
+			return seen
 		}
 		payload := data[i+4 : i+2+segLen]
 		if marker == 0xe1 && hasPrefix(payload, []byte("Exif\x00\x00")) {
-			if d := readTIFF(payload[6:]); d.Valid() {
+			d := readTIFF(payload[6:])
+			if d.Taken.Valid() {
 				return d
+			}
+			// Orientation sits in the same block, so a file with no usable date
+			// still reports which way its pixels should be turned.
+			if seen.Orientation == 0 {
+				seen.Orientation = d.Orientation
 			}
 		}
 		i += 2 + segLen
 	}
-	return Date{}
+	return seen
 }
 
-func scanPNG(data []byte) Date {
+func scanPNG(data []byte) Doc {
+	var seen Doc
 	for i := 8; i+12 <= len(data); {
 		chunkLen := int(binary.BigEndian.Uint32(data[i : i+4]))
 		if chunkLen < 0 || i+12+chunkLen > len(data) {
-			return Date{}
+			return seen
 		}
 		kind := string(data[i+4 : i+8])
 		body := data[i+8 : i+8+chunkLen]
 		if kind == "IDAT" { // eXIf has to precede the image data to be trusted
-			return Date{}
+			return seen
 		}
 		if kind == "eXIf" {
-			if d := readTIFF(body); d.Valid() {
+			d := readTIFF(body)
+			if d.Taken.Valid() {
 				return d
+			}
+			if seen.Orientation == 0 {
+				seen.Orientation = d.Orientation
 			}
 		}
 		i += 12 + chunkLen
 	}
-	return Date{}
+	return seen
 }
 
 type entry struct {
@@ -229,9 +260,17 @@ func (e entry) text() string {
 	return strings.TrimRight(string(e.value), "\x00 ")
 }
 
-func readTIFF(buf []byte) Date {
+// short reads a single-value SHORT entry, which is how orientation is stored.
+func (e entry) short(order binary.ByteOrder) uint16 {
+	if e.typ != typeShort || len(e.value) < 2 {
+		return 0
+	}
+	return order.Uint16(e.value)
+}
+
+func readTIFF(buf []byte) Doc {
 	if len(buf) < 8 {
-		return Date{}
+		return Doc{}
 	}
 	var order binary.ByteOrder
 	switch {
@@ -240,11 +279,15 @@ func readTIFF(buf []byte) Date {
 	case buf[0] == 'M' && buf[1] == 'M':
 		order = binary.BigEndian
 	default:
-		return Date{}
+		return Doc{}
 	}
 	ifd0, ok := readIFD(buf, int(order.Uint32(buf[4:8])), order)
 	if !ok {
-		return Date{}
+		return Doc{}
+	}
+	doc := Doc{}
+	if o, ok := ifd0[tagOrientation]; ok {
+		doc.Orientation = o.short(order)
 	}
 	var sub map[uint16]entry
 	if ptr, ok := ifd0[tagExifIFD]; ok && ptr.typ == typeLong && len(ptr.value) == 4 {
@@ -280,10 +323,11 @@ func readTIFF(buf []byte) Date {
 			}
 		}
 		if d.Valid() {
-			return d
+			doc.Taken = d
+			return doc
 		}
 	}
-	return Date{}
+	return doc
 }
 
 func typeLen(typ uint16) int {
@@ -301,6 +345,40 @@ func typeLen(typ uint16) int {
 // App1 builds an EXIF APP1 segment holding d's date fields, ready to splice into a
 // JPEG. It returns nil when d has no usable date.
 func (d Date) App1() []byte {
+	tiff := d.TIFF()
+	if tiff == nil {
+		return nil
+	}
+	payload := append([]byte("Exif\x00\x00"), tiff...)
+	segLen := len(payload) + 2
+	if segLen > 0xffff {
+		return nil
+	}
+	return append([]byte{0xff, 0xe1, byte(segLen >> 8), byte(segLen)}, payload...)
+}
+
+// PngChunk returns the same date as a complete PNG eXIf chunk, or nil when there is
+// nothing to write. The chunk body is the TIFF block on its own: the "Exif\0\0"
+// prefix is a JPEG marker convention, not part of the TIFF.
+func (d Date) PngChunk() []byte {
+	tiff := d.TIFF()
+	if tiff == nil {
+		return nil
+	}
+	head := make([]byte, 8)
+	binary.BigEndian.PutUint32(head[:4], uint32(len(tiff)))
+	copy(head[4:], chunkEXIf)
+	out := append(head, tiff...)
+	tail := make([]byte, 4)
+	binary.BigEndian.PutUint32(tail, crc32.ChecksumIEEE(append(append([]byte{}, head[4:]...), tiff...)))
+	return append(out, tail...)
+}
+
+// TIFF is the metadata block the containers share: IFD0 with the wall clock and
+// a pointer, and the Exif sub-IFD with the original and digitised times. JPEG
+// wraps it in an APP1 marker and PNG in an eXIf chunk; a HEIC Exif item takes it
+// as it stands.
+func (d Date) TIFF() []byte {
 	if !d.Valid() {
 		return nil
 	}
@@ -383,13 +461,7 @@ func (d Date) App1() []byte {
 			put(append([]byte(f.text), 0)...)
 		}
 	}
-
-	payload := append([]byte("Exif\x00\x00"), buf...)
-	segLen := len(payload) + 2
-	if segLen > 0xffff {
-		return nil
-	}
-	return append([]byte{0xff, 0xe1, byte(segLen >> 8), byte(segLen)}, payload...)
+	return buf
 }
 
 // wall renders the stored date, padding a truncated string to the EXIF width.
@@ -411,6 +483,27 @@ func InjectJPEG(data []byte, app1 []byte) []byte {
 	out = append(out, data[:2]...)
 	out = append(out, app1...)
 	return append(out, data[2:]...)
+}
+
+// InjectPNG places a chunk directly after IHDR, which is where the PNG
+// specification wants metadata ahead of the image data. Data that is not a PNG is
+// returned as is.
+func InjectPNG(data []byte, chunk []byte) []byte {
+	if len(chunk) == 0 || !hasPrefix(data, pngSig) {
+		return data
+	}
+	if len(data) < len(pngSig)+12 {
+		return data
+	}
+	// 12 covers the IHDR length, type and CRC fields around its body.
+	end := len(pngSig) + 12 + int(binary.BigEndian.Uint32(data[len(pngSig):]))
+	if end > len(data) {
+		return data
+	}
+	out := make([]byte, 0, len(data)+len(chunk))
+	out = append(out, data[:end]...)
+	out = append(out, chunk...)
+	return append(out, data[end:]...)
 }
 
 func normalizeOffset(s string) string {
