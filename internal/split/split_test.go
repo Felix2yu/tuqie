@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"tuqie/internal/axis"
+	"tuqie/internal/exif"
 )
 
 func gradient(w, h int) *image.RGBA {
@@ -81,7 +82,7 @@ func TestEncodeRoundTrip(t *testing.T) {
 	src := gradient(24, 40)
 	for _, format := range []string{FormatPNG, FormatJPEG} {
 		var buf bytes.Buffer
-		if err := Encode(&buf, src, format, 90); err != nil {
+		if err := Encode(&buf, src, format, 90, exif.Date{}); err != nil {
 			t.Fatalf("%s: %v", format, err)
 		}
 		dec, err := png.Decode(bytes.NewReader(buf.Bytes()))
@@ -95,8 +96,49 @@ func TestEncodeRoundTrip(t *testing.T) {
 			t.Fatalf("%s size %v", format, s)
 		}
 	}
-	if err := Encode(&bytes.Buffer{}, src, "tiff", 90); err == nil {
+	if err := Encode(&bytes.Buffer{}, src, "tiff", 90, exif.Date{}); err == nil {
 		t.Fatal("unknown format should error")
+	}
+}
+
+func TestEncodeCarriesCaptureDate(t *testing.T) {
+	// The album importer reads the shoot time out of the image bytes, so a slice has
+	// to keep the source date instead of reporting the moment it was cut.
+	src := gradient(20, 30)
+	taken := exif.Date{Wall: "2026:10:07 09:15:30", Subsec: "482", Offset: "+08:00"}
+
+	var buf bytes.Buffer
+	if err := Encode(&buf, src, FormatJPEG, 90, taken); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(buf.Bytes())); err != nil {
+		t.Fatalf("dated JPEG no longer decodes: %v", err)
+	}
+	if got := exif.Scan(buf.Bytes()); got != taken {
+		t.Fatalf("date read back = %+v, want %+v", got, taken)
+	}
+
+	// Without a source date nothing is attached, so output stays byte-identical to
+	// the plain encoder.
+	plain := gradient(20, 30)
+	var undated, bare bytes.Buffer
+	if err := Encode(&undated, plain, FormatJPEG, 90, exif.Date{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := jpeg.Encode(&bare, plain, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(undated.Bytes(), bare.Bytes()) {
+		t.Fatal("empty date should not add metadata")
+	}
+
+	// PNG has no date field readers agree on; the date is dropped, not faked.
+	var pngBuf bytes.Buffer
+	if err := Encode(&pngBuf, src, FormatPNG, 90, taken); err != nil {
+		t.Fatal(err)
+	}
+	if d := exif.Scan(pngBuf.Bytes()); d.Valid() {
+		t.Fatalf("PNG picked up %+v", d)
 	}
 }
 
@@ -106,7 +148,7 @@ func TestEncodeFallsBackToDefaultQuality(t *testing.T) {
 	src := gradient(16, 24)
 	for _, q := range []int{0, -1, 101, 1000} {
 		var buf bytes.Buffer
-		if err := Encode(&buf, src, FormatJPEG, q); err != nil {
+		if err := Encode(&buf, src, FormatJPEG, q, exif.Date{}); err != nil {
 			t.Fatalf("quality %d: %v", q, err)
 		}
 		if _, err := jpeg.Decode(&buf); err != nil {
@@ -114,11 +156,11 @@ func TestEncodeFallsBackToDefaultQuality(t *testing.T) {
 		}
 	}
 	var ref bytes.Buffer
-	if err := Encode(&ref, src, FormatJPEG, 92); err != nil {
+	if err := Encode(&ref, src, FormatJPEG, 92, exif.Date{}); err != nil {
 		t.Fatal(err)
 	}
 	var clamped bytes.Buffer
-	if err := Encode(&clamped, src, FormatJPEG, 0); err != nil {
+	if err := Encode(&clamped, src, FormatJPEG, 0, exif.Date{}); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(ref.Bytes(), clamped.Bytes()) {

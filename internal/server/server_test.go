@@ -6,18 +6,23 @@ import (
 	"encoding/json"
 	"image"
 	"image/color"
+	"image/jpeg"
 	"image/png"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"tuqie/internal/axis"
+	"tuqie/internal/exif"
 	"tuqie/internal/store"
 )
 
@@ -72,10 +77,16 @@ func testPNG(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
-func postMultipart(t *testing.T, handler http.Handler, path, field, filename string, data []byte) *httptest.ResponseRecorder {
+func postMultipart(t *testing.T, handler http.Handler, path, field, filename string, data []byte, extra ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
+	// extra carries further form fields as key, value pairs.
+	for i := 1; i < len(extra); i += 2 {
+		if err := mw.WriteField(extra[i-1], extra[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if field != "" {
 		fw, err := mw.CreateFormFile(field, filename)
 		if err != nil {
@@ -108,7 +119,12 @@ func decodeError(t *testing.T, rec *httptest.ResponseRecorder) string {
 
 func upload(t *testing.T, handler http.Handler, data []byte) analyzeResp {
 	t.Helper()
-	rec := postMultipart(t, handler, "/api/analyze", "file", "shot.png", data)
+	return uploadNamed(t, handler, "shot.png", data)
+}
+
+func uploadNamed(t *testing.T, handler http.Handler, name string, data []byte, extra ...string) analyzeResp {
+	t.Helper()
+	rec := postMultipart(t, handler, "/api/analyze", "file", name, data, extra...)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("analyze %d: %s", rec.Code, rec.Body.String())
 	}
@@ -195,7 +211,7 @@ func TestImageErrorsWhenMissingOrGone(t *testing.T) {
 		t.Fatalf("unknown id: %d", rec.Code)
 	}
 
-	p, err := st.Put(bytes.NewReader(testPNG(t, 4, 4)), "shot.png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 4, 4)), "shot.png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +261,7 @@ func TestSliceServesBands(t *testing.T) {
 
 func TestSliceRejectsBadRequests(t *testing.T) {
 	handler, st := newHandler(t)
-	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +350,7 @@ func TestExportZipsBands(t *testing.T) {
 
 func TestExportRejectsBadRequests(t *testing.T) {
 	handler, st := newHandler(t)
-	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +433,7 @@ func TestImageSurvivesADroppedClient(t *testing.T) {
 	defer st.Close()
 	s := New(st, fstest.MapFS{})
 
-	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 8, 8)), "shot.png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +447,7 @@ func TestImageSurvivesADroppedClient(t *testing.T) {
 
 func TestExportNamesFilesAfterTheScreenshotWithoutAStem(t *testing.T) {
 	handler, st := newHandler(t)
-	p, err := st.Put(bytes.NewReader(testPNG(t, 10, 20)), ".png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 10, 20)), ".png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +487,7 @@ func TestExportSurvivesADroppedClient(t *testing.T) {
 
 	// One band has to be big enough that the zip flushes while writing it,
 	// which is when the dead client shows up.
-	p, err := st.Put(bytes.NewReader(testPNG(t, 200, 2000)), "shot.png")
+	p, err := st.Put(bytes.NewReader(testPNG(t, 200, 2000)), "shot.png", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,5 +551,212 @@ func TestPickFormatAndHelpers(t *testing.T) {
 	}
 	if n, err := atoi("42"); err != nil || n != 42 {
 		t.Errorf("atoi(42) = %d, %v", n, err)
+	}
+}
+
+// ---- capture dates ----
+
+// datedJPEG returns a small JPEG carrying taken as its capture date.
+func datedJPEG(t *testing.T, w, h int, taken exif.Date) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			img.SetRGBA(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 90, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		t.Fatal(err)
+	}
+	return exif.InjectJPEG(buf.Bytes(), taken.App1())
+}
+
+func exportZip(t *testing.T, handler http.Handler, id string, cuts []int, format string) *zip.Reader {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"id": id, "axis": "y", "cuts": cuts, "format": format, "quality": 90,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/export", bytes.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export %d: %s", rec.Code, rec.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return zr
+}
+
+func TestSliceKeepsTheSourceDate(t *testing.T) {
+	handler, _ := newHandler(t)
+	taken := exif.Date{Wall: "2026:10:07 09:15:30", Subsec: "482", Offset: "+08:00"}
+	res := uploadNamed(t, handler, "shot.jpg", datedJPEG(t, 12, 30, taken))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/slice?id="+res.ID+"&axis=y&from=4&to=19&format=jpeg&quality=90", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("slice %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := jpeg.Decode(bytes.NewReader(rec.Body.Bytes())); err != nil {
+		t.Fatalf("dated slice no longer decodes: %v", err)
+	}
+	if got := exif.Scan(rec.Body.Bytes()); got != taken {
+		t.Fatalf("slice date = %+v, want %+v", got, taken)
+	}
+
+	// PNG output has no date field readers agree on, so nothing is claimed for it.
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/slice?id="+res.ID+"&axis=y&from=4&to=19&format=png", nil))
+	if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
+		t.Fatalf("PNG slice picked up %+v", d)
+	}
+}
+
+func TestSliceOfUndatedUploadStaysClean(t *testing.T) {
+	handler, _ := newHandler(t)
+	res := upload(t, handler, testPNG(t, 12, 30))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&format=jpeg", nil))
+	if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
+		t.Fatalf("an undated source produced %+v", d)
+	}
+}
+
+func TestAnalyzeFallsBackToTheReportedFileTime(t *testing.T) {
+	handler, _ := newHandler(t)
+	when := time.Date(2026, 10, 5, 21, 4, 9, 0, time.Local)
+	res := uploadNamed(t, handler, "shot.png", testPNG(t, 12, 30),
+		"lastModified", strconv.FormatInt(when.UnixMilli(), 10))
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&format=jpeg", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("slice %d: %s", rec.Code, rec.Body.String())
+	}
+	if got, want := exif.Scan(rec.Body.Bytes()), exif.FromTime(when); got != want {
+		t.Fatalf("slice date = %+v, want %+v", got, want)
+	}
+
+	zr := exportZip(t, handler, res.ID, []int{10, 20}, "png")
+	if len(zr.File) != 3 {
+		t.Fatalf("entries = %d, want 3", len(zr.File))
+	}
+	for _, f := range zr.File {
+		if !f.Modified.Equal(when) {
+			t.Fatalf("entry %s stamped %s, want %s", f.Name, f.Modified, when)
+		}
+	}
+}
+
+func TestAnalyzeReportsTheCaptureDate(t *testing.T) {
+	handler, _ := newHandler(t)
+	taken := exif.Date{Wall: "2026:10:07 09:15:30", Offset: "+08:00"}
+	res := uploadNamed(t, handler, "shot.jpg", datedJPEG(t, 12, 30, taken))
+	when, err := taken.Time()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Taken != when.UnixMilli() {
+		t.Fatalf("taken = %d, want %d", res.Taken, when.UnixMilli())
+	}
+
+	if res := uploadNamed(t, handler, "shot.png", testPNG(t, 12, 30)); res.Taken != 0 {
+		t.Fatalf("an undated upload reported %d", res.Taken)
+	}
+}
+
+func TestAnalyzeIgnoresAnUnusableReportedFileTime(t *testing.T) {
+	handler, _ := newHandler(t)
+	// Browsers report 0 when they cannot tell, and this is untrusted input, so
+	// anything that is not a plain timestamp leaves the upload undated.
+	for _, value := range []string{"", "0", "-1", "abc", "1e9", "99999999999999999999", "1775000000"} {
+		res := uploadNamed(t, handler, "shot.png", testPNG(t, 12, 30), "lastModified", value)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/api/slice?id="+res.ID+"&axis=y&from=0&to=30&format=jpeg", nil))
+		if d := exif.Scan(rec.Body.Bytes()); d.Valid() {
+			t.Fatalf("lastModified %q produced %+v", value, d)
+		}
+	}
+}
+
+func TestUploadTime(t *testing.T) {
+	form := &url.Values{}
+	form.Set("lastModified", "1791680679000")
+	req := httptest.NewRequest(http.MethodPost, "/api/analyze", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	got := uploadTime(req)
+	if want := time.UnixMilli(1791680679000); !got.Equal(want) {
+		t.Fatalf("uploadTime = %s, want %s", got, want)
+	}
+	if got := uploadTime(httptest.NewRequest(http.MethodPost, "/api/analyze", nil)); !got.IsZero() {
+		t.Fatalf("missing field = %s", got)
+	}
+}
+
+func TestExportStampsEntriesWithTheSourceDate(t *testing.T) {
+	handler, _ := newHandler(t)
+	taken := exif.Date{Wall: "2026:10:07 09:15:30", Offset: "+08:00"}
+	res := uploadNamed(t, handler, "shot.jpg", datedJPEG(t, 10, 30, taken))
+
+	zr := exportZip(t, handler, res.ID, []int{10, 20}, "jpeg")
+	if len(zr.File) != 3 {
+		t.Fatalf("entries %d, want 3", len(zr.File))
+	}
+	for _, f := range zr.File {
+		// Zip times are zone-less, so what has to survive is the camera's wall
+		// clock (09:15:30 in +08:00), which a reader hands back in the local zone.
+		want := time.Date(2026, 10, 7, 9, 15, 30, 0, time.Local)
+		if !f.Modified.Equal(want) {
+			t.Errorf("%s modified %s, want %s", f.Name, f.Modified, want)
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := io.ReadAll(rc)
+		rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := exif.Scan(data); d.Wall != taken.Wall {
+			t.Errorf("%s carries %+v, want %s", f.Name, d, taken.Wall)
+		}
+	}
+}
+
+func TestExportWithoutSourceDateFallsBackToNow(t *testing.T) {
+	// An upload that never carried a date keeps the old behaviour: the archive
+	// writer stamps entries with the export time.
+	start := time.Now().Add(-2 * time.Second)
+	handler, _ := newHandler(t)
+	res := upload(t, handler, testPNG(t, 10, 30))
+
+	for _, f := range exportZip(t, handler, res.ID, []int{10}, "png").File {
+		if f.Modified.Before(start) {
+			t.Errorf("%s modified %s, want the export time", f.Name, f.Modified)
+		}
+	}
+}
+
+func TestEntryTimeBounds(t *testing.T) {
+	if _, ok := entryTime(exif.Date{}); ok {
+		t.Fatal("no date should leave the entry unstamped")
+	}
+	if _, ok := entryTime(exif.Date{Wall: "1979:12:31 23:59:59"}); ok {
+		t.Fatal("DOS timestamps cannot hold a pre-1980 date")
+	}
+	when, ok := entryTime(exif.Date{Wall: "1980:01:01 00:00:00"})
+	if !ok || when.Year() != 1980 {
+		t.Fatalf("1980 should be stampable, got %v, %v", when, ok)
 	}
 }
