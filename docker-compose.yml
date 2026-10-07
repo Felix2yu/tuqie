@@ -1,0 +1,15 @@
+services:
+  tuqie:
+    image: ghcr.io/felix2yu/tuqie:latest
+    ports:
+      - "7423:7423"
+    volumes:
+      - tuqie-data:/data
+    restart: unless-stopped
+
+    # 镜像 CMD 已带默认参数（-addr :7423 -data /data -ttl 60m）；
+    # 需要覆盖时在 command 里整条重写：
+    # command: ["-addr", ":7423", "-data", "/data", "-ttl", "10m"]
+
+volumes:
+  tuqie-data:
