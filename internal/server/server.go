@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -21,30 +22,53 @@ import (
 	"tuqie/internal/axis"
 	"tuqie/internal/detect"
 	"tuqie/internal/exif"
+	"tuqie/internal/preview"
 	"tuqie/internal/split"
 	"tuqie/internal/store"
 )
 
 const maxUpload = 250 << 20
 
-type Server struct {
-	store *store.Store
-	web   fs.FS
+// Config is how the server starts up. Its zero value is the tool as it has
+// always behaved: open, and with no ceiling on uploads.
+type Config struct {
+	// Password, when set, is asked of every request through the browser's own
+	// basic-auth prompt. Empty leaves the instance open to whoever can reach it.
+	Password string
+	// UploadsPerMinute is the sustained rate one client may post new screenshots,
+	// with a short burst on top. Zero switches the ceiling off.
+	UploadsPerMinute int
 }
 
-func New(s *store.Store, web fs.FS) *Server { return &Server{store: s, web: web} }
+type Server struct {
+	store    *store.Store
+	web      fs.FS
+	password string
+	budget   *uploadBudget
+}
+
+func New(s *store.Store, web fs.FS, cfg Config) *Server {
+	return &Server{store: s, web: web, password: cfg.Password, budget: newUploadBudget(cfg.UploadsPerMinute)}
+}
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/analyze", s.handleAnalyze)
 	mux.HandleFunc("GET /api/image", s.handleImage)
+	mux.HandleFunc("GET /api/preview", s.handlePreview)
 	mux.HandleFunc("GET /api/slice", s.handleSlice)
 	mux.HandleFunc("POST /api/export", s.handleExport)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true})
 	})
 	mux.Handle("/", http.FileServer(http.FS(s.web)))
-	return &logged{next: mux}
+
+	var h http.Handler = mux
+	h = s.limitUploads(h)
+	if s.password != "" {
+		h = requirePassword(s.password, h)
+	}
+	return &logged{next: h}
 }
 
 type analyzeResp struct {
@@ -101,6 +125,13 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	res := detect.Analyze(img, detect.DefaultOptions())
 	log.Printf("analyze: %s %dx%d axis=%s -> %d candidates in %s", p.ID, p.Width, p.Height, res.Axis, len(res.Candidates), time.Since(start))
 
+	// The browser works from the small copy when there is one; the slices it
+	// exports still come from the original pixels.
+	imgURL := "/api/image?id=" + p.ID
+	if _, _, needed := previewFor(p); needed {
+		imgURL = "/api/preview?id=" + p.ID
+	}
+
 	writeJSON(w, analyzeResp{
 		ID:         p.ID,
 		Filename:   p.Filename,
@@ -108,7 +139,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		Width:      p.Width,
 		Height:     p.Height,
 		Axis:       res.Axis.String(),
-		URL:        "/api/image?id=" + p.ID,
+		URL:        imgURL,
 		Candidates: res.Candidates,
 		Signal:     res.Signal,
 		Taken:      takenMillis(p.Taken),
@@ -120,17 +151,91 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	f, err := os.Open(p.Path)
+	serveFile(w, p.Path, p.Mime)
+}
+
+// previewFor decides whether the browser works from a JPEG rendition: the upload
+// is either too big to hand over whole, or a format too many browsers fail to
+// draw in an <img> tag to be shown as it is.
+func previewFor(p *store.Picture) (width, height int, needed bool) {
+	width, height, big := preview.Fit(p.Width, p.Height)
+	return width, height, big || !drawsInline(p.Mime)
+}
+
+// drawsInline lists what a bare <img> shows in every current browser. HEIF needs
+// an OS decoder a given Chrome may not reach for, and JPEG XL support keeps
+// being added and reverted, so both are drawn from the rendition instead.
+func drawsInline(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/gif", "image/webp", "image/avif":
+		return true
+	}
+	return false
+}
+
+// handlePreview serves the downscaled copy the working view is drawn from. It is
+// rendered on the first request and kept beside the upload, so a 120MP stitch
+// costs the browser one small JPEG instead of its whole pixel buffer. Pictures
+// that already fit the budget, and a render that cannot be written, fall back to
+// the original bytes.
+func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.picture(w, r)
+	if !ok {
+		return
+	}
+	width, height, needed := previewFor(p)
+	file := p.PreviewPath()
+	if needed && !exists(file) {
+		if err := writePreview(file, p, width, height); err != nil {
+			log.Printf("preview: %s: %v", p.ID, err)
+		}
+	}
+	if needed && exists(file) {
+		serveFile(w, file, "image/jpeg")
+		return
+	}
+	serveFile(w, p.Path, p.Mime)
+}
+
+// writePreview renders through a temporary file so two first requests cannot
+// leave a half-written preview behind.
+func writePreview(file string, p *store.Picture, width, height int) error {
+	img, err := p.Image()
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(file), "preview-*.jpg")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if err := preview.Encode(tmp, img, width, height); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), file)
+}
+
+func serveFile(w http.ResponseWriter, file, mime string) {
+	f, err := os.Open(file)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "原图已过期，请重新上传")
 		return
 	}
 	defer f.Close()
-	w.Header().Set("Content-Type", p.Mime)
+	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "private, max-age=600")
 	if _, err := io.Copy(w, f); err != nil {
 		log.Printf("image: %v", err)
 	}
+}
+
+func exists(file string) bool {
+	_, err := os.Stat(file)
+	return err == nil
 }
 
 // handleSlice serves one band as an image the browser can turn into a File.
@@ -180,11 +285,48 @@ func (s *Server) handleSlice(w http.ResponseWriter, r *http.Request) {
 }
 
 type exportReq struct {
-	ID      string `json:"id"`
-	Axis    string `json:"axis"`
-	Cuts    []int  `json:"cuts"`
+	ID     string `json:"id"`
+	Axis   string `json:"axis"`
+	Cuts   []int  `json:"cuts"`
+	Skip   []int  `json:"skip"`
+	Prefix string `json:"prefix"`
+	// Start is a pointer so "number these from zero" stays distinguishable from a
+	// request that never mentioned numbering.
+	Start   *int   `json:"start"`
 	Format  string `json:"format"`
 	Quality int    `json:"quality"`
+}
+
+// safePrefix keeps a typed-in name from turning into a path: zip entry names are
+// read back by extractors that follow "../" without complaining.
+func safePrefix(raw string) string {
+	s := strings.Map(func(r rune) rune {
+		switch {
+		case r == '/' || r == '\\' || r == ':' || r == '"' || r < 0x20:
+			return '_'
+		}
+		return r
+	}, strings.TrimSpace(raw))
+	// The ends are stripped of dots before the ".." sweep, otherwise
+	// "会话..." survives as "会话_" and the exported name reads "会话_-01.png".
+	s = strings.ReplaceAll(strings.Trim(s, ". "), "..", "_")
+	if runes := []rune(s); len(runes) > 80 {
+		s = string(runes[:80])
+	}
+	return strings.Trim(s, ". ")
+}
+
+// namePad is the digit width the whole run needs: two at minimum, wider once the
+// numbers outgrow that, so a 120-piece export sorts correctly on disk.
+func namePad(start, count int) int {
+	last := start
+	if n := start + count - 1; n > last {
+		last = n
+	}
+	if n := len(strconv.Itoa(last)); n > 2 {
+		return n
+	}
+	return 2
 }
 
 // handleExport streams all bands as one zip, for desktop users.
@@ -210,18 +352,40 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "还没有可用的切割范围")
 		return
 	}
+	skip := make(map[int]bool, len(req.Skip))
+	for _, i := range req.Skip {
+		skip[i] = true
+	}
+	kept := make([][2]int, 0, len(bands))
+	for i, b := range bands {
+		if !skip[i] {
+			kept = append(kept, b)
+		}
+	}
+	if len(kept) == 0 {
+		writeErr(w, http.StatusBadRequest, "所有切片都被排除了")
+		return
+	}
 	format, quality := pickFormat(req.Format, strconv.Itoa(req.Quality))
 
-	base := strings.TrimSuffix(path.Base(p.Filename), path.Ext(p.Filename))
+	base := safePrefix(req.Prefix)
+	if base == "" {
+		base = strings.TrimSuffix(path.Base(p.Filename), path.Ext(p.Filename))
+	}
 	if base == "" {
 		base = "screenshot"
 	}
+	start := 1
+	if req.Start != nil {
+		start = max(*req.Start, 0)
+	}
+	pad := namePad(start, len(kept))
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-slices.zip"`, base))
 
 	zw := zip.NewWriter(w)
 	var written int
-	for i, b := range bands {
+	for i, b := range kept {
 		crop, err := split.Slice(img, ax, b[0], b[1])
 		if err != nil {
 			log.Printf("export: skip band %d: %v", i, err)
@@ -233,7 +397,7 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		fh := &zip.FileHeader{
-			Name:     fmt.Sprintf("%s-%02d.%s", base, i+1, split.Ext(format)),
+			Name:     fmt.Sprintf("%s-%0*d.%s", base, pad, start+i, split.Ext(format)),
 			Method:   zip.Deflate,
 			Modified: time.Now(),
 		}
@@ -292,10 +456,20 @@ func (s *Server) picture(w http.ResponseWriter, r *http.Request) (*store.Picture
 	return p, ok
 }
 
+// formats are the outputs a request can name; anything else is treated as the
+// default rather than refused, so an older client still gets pictures.
+var formats = map[string]string{
+	"jpeg": split.FormatJPEG,
+	"png":  split.FormatPNG,
+	"heic": split.FormatHEIC,
+	"avif": split.FormatAVIF,
+	"jxl":  split.FormatJXL,
+}
+
 func pickFormat(raw, rawQuality string) (string, int) {
-	format := split.FormatJPEG
-	if raw == split.FormatPNG {
-		format = split.FormatPNG
+	format, ok := formats[raw]
+	if !ok {
+		format = split.FormatJPEG
 	}
 	q := 92
 	if rawQuality != "" {
@@ -328,9 +502,17 @@ func entryTime(taken exif.Date) (time.Time, bool) {
 	return when, true
 }
 
+// mimeFor labels a slice by the suffix it was cut with.
 func mimeFor(ext string) string {
-	if ext == "png" {
+	switch ext {
+	case "png":
 		return "image/png"
+	case "heic":
+		return "image/heic"
+	case "avif":
+		return "image/avif"
+	case "jxl":
+		return "image/jxl"
 	}
 	return "image/jpeg"
 }

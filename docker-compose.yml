@@ -7,9 +7,12 @@ services:
       - tuqie-data:/data
     restart: unless-stopped
 
-    # 镜像 CMD 已带默认参数（-addr :7423 -data /data -ttl 60m）；
+    # 镜像 CMD 已带默认参数（-addr :7423 -data /data -ttl 60m -uploads-per-minute 30）；
     # 需要覆盖时在 command 里整条重写：
     # command: ["-addr", ":7423", "-data", "/data", "-ttl", "10m"]
+
+    # 对外敞开时加一道密码（浏览器会弹认证框，用户名随意）：
+    # command: ["-addr", ":7423", "-data", "/data", "-ttl", "60m", "-password", "换成你的密码"]
 
 volumes:
   tuqie-data:
