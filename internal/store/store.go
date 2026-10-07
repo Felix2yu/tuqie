@@ -2,6 +2,7 @@
 package store
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"tuqie/internal/exif"
+
 	// Register image decoders for the accepted upload types.
 	_ "image/gif"
 	_ "image/jpeg"
@@ -24,6 +27,10 @@ import (
 
 // maxPixels rejects absurdly large uploads before they exhaust memory.
 const maxPixels = 120_000_000
+
+// headBytes is how much of an upload is kept around for metadata probing. EXIF
+// precedes the pixel data, and this covers files carrying a large thumbnail.
+const headBytes = 1 << 20
 
 // hotWindow keeps recently used uploads decoded; beyond it the pixel buffer is
 // dropped and the file is re-decoded on demand.
@@ -36,6 +43,9 @@ type Picture struct {
 	Width    int
 	Height   int
 	Path     string
+	// Taken is the capture date of the upload: the one in its metadata, or the
+	// uploader's file timestamp when the bytes carry none.
+	Taken exif.Date
 
 	mu   sync.Mutex
 	rgba *image.RGBA
@@ -117,8 +127,9 @@ var extMime = map[string]string{
 }
 
 // Put persists an upload and reports its dimensions without holding the whole
-// pixel buffer in memory.
-func (s *Store) Put(r io.Reader, filename string) (*Picture, error) {
+// pixel buffer in memory. modified is the file's own timestamp as the uploader
+// knows it; it stands in for the capture date only when the bytes carry none.
+func (s *Store) Put(r io.Reader, filename string, modified time.Time) (*Picture, error) {
 	id := newID()
 	ext := strings.ToLower(filepath.Ext(sanitize(filename)))
 	if _, ok := extMime[ext]; !ok {
@@ -126,11 +137,16 @@ func (s *Store) Put(r io.Reader, filename string) (*Picture, error) {
 	}
 	path := filepath.Join(s.dir, id+ext)
 
+	head, err := io.ReadAll(io.LimitReader(r, headBytes))
+	if err != nil {
+		return nil, err
+	}
+
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, err
 	}
-	n, err := io.Copy(f, r)
+	n, err := io.Copy(f, io.MultiReader(bytes.NewReader(head), r))
 	closeErr := f.Close()
 	if err != nil || closeErr != nil {
 		os.Remove(path)
@@ -162,7 +178,13 @@ func (s *Store) Put(r io.Reader, filename string) (*Picture, error) {
 		Width:    cfg.Width,
 		Height:   cfg.Height,
 		Path:     path,
+		Taken:    exif.Scan(head),
 		used:     time.Now(),
+	}
+	if !p.Taken.Valid() {
+		if candidate := exif.FromTime(modified); candidate.InZipRange() {
+			p.Taken = candidate
+		}
 	}
 	s.mu.Lock()
 	s.items[id] = p

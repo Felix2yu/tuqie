@@ -20,6 +20,7 @@ import (
 
 	"tuqie/internal/axis"
 	"tuqie/internal/detect"
+	"tuqie/internal/exif"
 	"tuqie/internal/split"
 	"tuqie/internal/store"
 )
@@ -56,6 +57,18 @@ type analyzeResp struct {
 	URL        string             `json:"url"`
 	Candidates []detect.Candidate `json:"candidates"`
 	Signal     detect.Signal      `json:"signal"`
+	// Taken is the capture date the slices will carry, as an epoch in milliseconds.
+	Taken int64 `json:"taken,omitempty"`
+}
+
+// takenMillis is that date for the browser, which needs an epoch to hand the share
+// sheet a File whose timestamp is the shot rather than the moment it was saved.
+func takenMillis(taken exif.Date) int64 {
+	when, err := taken.Time()
+	if err != nil {
+		return 0
+	}
+	return when.UnixMilli()
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +86,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	p, err := s.store.Put(file, header.Filename)
+	p, err := s.store.Put(file, header.Filename, uploadTime(r))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -98,6 +111,7 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		URL:        "/api/image?id=" + p.ID,
 		Candidates: res.Candidates,
 		Signal:     res.Signal,
+		Taken:      takenMillis(p.Taken),
 	})
 }
 
@@ -154,7 +168,7 @@ func (s *Server) handleSlice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var buf bytes.Buffer
-	if err := split.Encode(&buf, crop, format, quality); err != nil {
+	if err := split.Encode(&buf, crop, format, quality, p.Taken); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -214,11 +228,21 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		var buf bytes.Buffer
-		if err := split.Encode(&buf, crop, format, quality); err != nil {
+		if err := split.Encode(&buf, crop, format, quality, p.Taken); err != nil {
 			log.Printf("export: skip band %d: %v", i, err)
 			continue
 		}
-		fw, err := zw.Create(fmt.Sprintf("%s-%02d.%s", base, i+1, split.Ext(format)))
+		fh := &zip.FileHeader{
+			Name:     fmt.Sprintf("%s-%02d.%s", base, i+1, split.Ext(format)),
+			Method:   zip.Deflate,
+			Modified: time.Now(),
+		}
+		// CreateHeader writes a zero Modified as a 1979 date, so the fallback above
+		// is what keeps undated exports stamped with the export time.
+		if when, ok := entryTime(p.Taken); ok {
+			fh.Modified = when
+		}
+		fw, err := zw.CreateHeader(fh)
 		if err != nil {
 			log.Printf("export: %v", err)
 			return
@@ -280,6 +304,28 @@ func pickFormat(raw, rawQuality string) (string, int) {
 		}
 	}
 	return format, q
+}
+
+// uploadTime is the timestamp the uploader reports for the file itself. Browsers
+// leave it out for pasted images, and then there is nothing to stand in.
+func uploadTime(r *http.Request) time.Time {
+	ms, err := strconv.ParseInt(r.FormValue("lastModified"), 10, 64)
+	if err != nil {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
+}
+
+// entryTime is the modification time to stamp zip entries with.
+func entryTime(taken exif.Date) (time.Time, bool) {
+	if !taken.InZipRange() {
+		return time.Time{}, false
+	}
+	when, err := taken.Time()
+	if err != nil {
+		return time.Time{}, false
+	}
+	return when, true
 }
 
 func mimeFor(ext string) string {

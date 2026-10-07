@@ -25,6 +25,8 @@ export type Analysis = {
   url: string;
   candidates: Candidate[];
   signal: Signal;
+  /** Capture date the slices carry, in epoch ms; absent when nothing could be read. */
+  taken?: number;
 };
 
 export type Format = 'jpeg' | 'png';

@@ -129,7 +129,7 @@ export default function App() {
         (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`),
       );
       setBusy('请在分享面板中选择「存储图像」…');
-      const outcome = await sharePieces(pieces);
+      const outcome = await sharePieces(pieces, analysis.taken);
       if (outcome === 'shared') setStatus({ tone: 'ok', text: `已交给系统，${total} 张已存入相册` });
       else if (outcome === 'cancelled') setStatus({ tone: 'warn', text: '已取消分享' });
       else setStatus({ tone: 'err', text: '分享失败，请改用 ZIP 下载' });

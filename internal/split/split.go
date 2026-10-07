@@ -2,6 +2,7 @@
 package split
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -9,6 +10,7 @@ import (
 	"io"
 
 	"tuqie/internal/axis"
+	"tuqie/internal/exif"
 )
 
 const (
@@ -45,14 +47,22 @@ func Slice(src *image.RGBA, ax axis.Axis, from, to int) (*image.RGBA, error) {
 	return out, nil
 }
 
-// Encode writes img in the requested format.
-func Encode(w io.Writer, img image.Image, format string, quality int) error {
+// Encode writes img in the requested format. taken is the capture date of the
+// source image: JPEG output carries it as EXIF so saved slices keep the original
+// timestamp instead of the moment they were cut. PNG has no date field readers
+// agree on, so it is left out there.
+func Encode(w io.Writer, img image.Image, format string, quality int, taken exif.Date) error {
 	switch format {
 	case FormatJPEG:
 		if quality <= 0 || quality > 100 {
 			quality = 92
 		}
-		return jpeg.Encode(w, img, &jpeg.Options{Quality: quality})
+		var buf bytes.Buffer
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
+			return err
+		}
+		_, err := w.Write(exif.InjectJPEG(buf.Bytes(), taken.App1()))
+		return err
 	case FormatPNG:
 		enc := &png.Encoder{CompressionLevel: png.BestCompression}
 		return enc.Encode(w, img)

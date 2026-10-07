@@ -50,8 +50,12 @@ export async function renderPieces(
 
 export type ShareOutcome = 'shared' | 'cancelled' | 'failed';
 
-export async function sharePieces(pieces: Piece[]): Promise<ShareOutcome> {
-  const files = pieces.map((p) => new File([p.blob], p.name, { type: p.type }));
+export async function sharePieces(pieces: Piece[], taken?: number): Promise<ShareOutcome> {
+  // A shared File with no timestamp of its own is filed under the moment it was
+  // saved, so the capture date travels with it instead.
+  const files = pieces.map((p) =>
+    new File([p.blob], p.name, taken ? { type: p.type, lastModified: taken } : { type: p.type }),
+  );
   try {
     await navigator.share({ files, title: '图切' });
     return 'shared';

@@ -13,6 +13,9 @@ async function errorMessage(res: Response): Promise<string> {
 export async function analyze(file: File): Promise<Analysis> {
   const form = new FormData();
   form.append('file', file);
+  // Screenshots usually carry no capture date, so the file's own timestamp is sent
+  // along as the fallback.
+  if (file.lastModified > 0) form.append('lastModified', String(file.lastModified));
   const res = await fetch('/api/analyze', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await errorMessage(res));
   return (await res.json()) as Analysis;
