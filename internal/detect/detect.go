@@ -71,9 +71,12 @@ func Analyze(src image.Image, opt Options) *Result {
 	if opt.AbsThresh <= 0 {
 		opt = DefaultOptions()
 	}
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
+	// Profiles index Pix from the buffer's own origin, so normalising has to
+	// happen before the bounds are read: an *image.RGBA with a shifted Rect is
+	// rebased by toRGBA, and its size is unchanged.
 	rgba := toRGBA(src)
+	b := rgba.Bounds()
+	w, h := b.Dx(), b.Dy()
 
 	vertical := scan(rgba, b.Min, w, h, opt, axis.Y)
 	horizontal := scan(rgba, b.Min, w, h, opt, axis.X)
@@ -178,8 +181,11 @@ func scan(rgba *image.RGBA, origin image.Point, w, h int, opt Options, ax axis.A
 	}
 }
 
+// toRGBA returns a zero-origin RGBA buffer. Pix starts at the buffer's own
+// origin, so a shifted *image.RGBA still has to be rebased before the profile
+// walkers can index it.
 func toRGBA(src image.Image) *image.RGBA {
-	if r, ok := src.(*image.RGBA); ok {
+	if r, ok := src.(*image.RGBA); ok && r.Rect.Min == (image.Point{}) {
 		return r
 	}
 	b := src.Bounds()
