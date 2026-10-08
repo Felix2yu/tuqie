@@ -42,6 +42,12 @@ body {
   -webkit-touch-callout: none;
 }
 
+/* viewport-fit=cover lets an installed window run its page under the notch, so
+   whatever sits at the very top has to be pushed back down by the inset. */
+.safe-top {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}
+
 .safe-bottom {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }

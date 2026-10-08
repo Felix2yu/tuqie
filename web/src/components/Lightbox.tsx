@@ -48,7 +48,7 @@ export default function Lightbox({ src, name, label, onClose }: Props) {
       tabIndex={-1}
       className="fixed inset-0 z-50 flex flex-col bg-ink-950/95 outline-none"
     >
-      <div className="flex shrink-0 items-center gap-2 border-b border-ink-700 px-3 py-2 text-xs text-ink-400">
+      <div className="safe-top flex shrink-0 items-center gap-2 border-b border-ink-700 px-3 py-2 text-xs text-ink-400">
         <span className="tabular-nums">{label}</span>
         <button
           type="button"

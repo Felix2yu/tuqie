@@ -1,10 +1,13 @@
 {
   "name": "图切",
   "short_name": "图切",
+  "id": "/",
+  "lang": "zh-CN",
   "description": "把拼成长图的截图拆回一张张独立照片",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#080b10",
   "theme_color": "#080b10",
   "icons": [
@@ -12,5 +15,21 @@
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
     { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/dropzone.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "拖入一张拼成长图的截图"
+    },
+    {
+      "src": "/screenshots/editor.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "识别出的分割线、强度条与导出选项"
+    }
   ]
 }

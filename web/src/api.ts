@@ -12,13 +12,27 @@ async function errorMessage(res: Response): Promise<string> {
   return `请求失败（${res.status}）`;
 }
 
+/**
+ * Everything that turns a picture into pieces happens on the server, so a request
+ * that never arrived is not a hiccup to retry but the app unable to do the one
+ * thing it is for — and the browser's own words for it ("Failed to fetch") say
+ * neither of those.
+ */
+async function send(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init);
+  } catch {
+    throw new Error('连不上服务器（设备离线了？），识别与导出都要靠它');
+  }
+}
+
 export async function analyze(file: File): Promise<Analysis> {
   const form = new FormData();
   form.append('file', file);
   // Screenshots usually carry no capture date, so the file's own timestamp is sent
   // along as the fallback.
   if (file.lastModified > 0) form.append('lastModified', String(file.lastModified));
-  const res = await fetch('/api/analyze', { method: 'POST', body: form });
+  const res = await send('/api/analyze', { method: 'POST', body: form });
   if (!res.ok) throw new Error(await errorMessage(res));
   return (await res.json()) as Analysis;
 }
@@ -53,7 +67,7 @@ export async function fetchSlice(
   format: Format,
   quality: number,
 ): Promise<Blob> {
-  const res = await fetch(sliceUrl(id, axis, from, to, index, format, quality));
+  const res = await send(sliceUrl(id, axis, from, to, index, format, quality));
   if (!res.ok) throw new Error(await errorMessage(res));
   return res.blob();
 }
@@ -84,7 +98,7 @@ export async function fetchZip(
   format: Format,
   quality: number,
 ): Promise<Blob> {
-  const res = await fetch('/api/export', {
+  const res = await send('/api/export', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

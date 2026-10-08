@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { analyze as analyzeFile, sliceUrl, zipCount } from './api';
 import Controls from './components/Controls';
 import Dropzone from './components/Dropzone';
@@ -50,6 +50,20 @@ export default function App() {
   // inside one tick: this ref is what actually keeps a second upload from starting.
   const uploadingRef = useRef(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // The installed copy opens with no network at all, and the page is the only part
+  // of it that works without the server. Say which half is missing instead of
+  // letting the drop zone offer a thing that cannot happen.
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const watch = () => setOnline(navigator.onLine);
+    window.addEventListener('online', watch);
+    window.addEventListener('offline', watch);
+    return () => {
+      window.removeEventListener('online', watch);
+      window.removeEventListener('offline', watch);
+    };
+  }, []);
 
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -293,14 +307,12 @@ export default function App() {
   };
 
   if (!analysis) {
-    return (
-      <Dropzone busy={uploading} error={uploadError} onFile={(f) => void handleFile(f)} />
-    );
+    return <Dropzone busy={uploading} error={uploadError} offline={!online} onFile={(f) => void handleFile(f)} />;
   }
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-3 border-b border-ink-700 bg-ink-900 px-3 py-2">
+      <header className="safe-top flex items-center gap-3 border-b border-ink-700 bg-ink-900 px-3 py-2">
         <span className="text-sm font-semibold text-white">图切</span>
         <span className="min-w-0 flex-1 truncate text-xs text-ink-400">
           {analysis.filename} · {analysis.width}×{analysis.height} · {exported.length} 张

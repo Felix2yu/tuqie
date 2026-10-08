@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 type Props = {
   busy: boolean;
   error: string | null;
+  // The shell opens without a network; a picture only becomes pieces on the
+  // server, so this is the one thing the page can say for itself.
+  offline: boolean;
   onFile: (file: File) => void;
 };
 
@@ -21,7 +24,7 @@ function namePasted(file: File): File | null {
   return new File([file], `${PASTED}-${stamp}.${ext}`, { type: file.type });
 }
 
-export default function Dropzone({ busy, error, onFile }: Props) {
+export default function Dropzone({ busy, error, offline, onFile }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const send = useRef(onFile);
@@ -91,6 +94,12 @@ export default function Dropzone({ busy, error, onFile }: Props) {
           支持 PNG / JPEG / GIF / HEIC / AVIF / JXL，最大 250 MB，也可以直接 ⌘V / Ctrl+V 粘贴
         </div>
       </button>
+
+      {offline && (
+        <p className="-mt-4 max-w-md text-center text-sm text-amber-300">
+          现在离线：这页还开得起来，但识别与导出都在服务器，等网络回来再传。
+        </p>
+      )}
 
       <ul className="max-w-md space-y-1 text-center text-xs text-ink-400">
         <li>竖排、横排的长图都会自动判方向，按拼接处的画面突变定位切割线，也可手动增删与拖动。</li>
