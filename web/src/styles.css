@@ -1,5 +1,9 @@
 @import 'tailwindcss';
 
+/* Icons, sw.js and the manifest are shipped verbatim, not class-name sources:
+   an SVG's transform="" attribute was being extracted as a .transform utility. */
+@source not "../public/**";
+
 @theme {
   --color-ink-950: #080b10;
   --color-ink-900: #0d1219;
