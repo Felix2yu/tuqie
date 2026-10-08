@@ -29,6 +29,9 @@ jobs:
       # 同一个 job 里前端先构建，web/dist 已经躺在 go:embed 的位置上，
       # 所以连 main 包一起跑，而不只是 ./internal/...
       test-packages: ./...
+      # 被测即所发：镜像那步带 nodynamic（见 README「图片格式」），测试也得跑在同一份
+      # 编译配置上，否则 avif 的 purego dlopen 路径只有 CI 编得进去、线上根本没这两个文件。
+      build-tags: nodynamic
       # 不加 -race：覆盖率插桩叠上 race 后，1080x21600 那次 Analyze 实测 8.095s，
       # 直接顶爆 detect_test 里 3s 的计时预算（单开 -race 是 0.4s 级、通过）。
       # 走默认的 -covermode=atomic：插桩后整包 4.2s，计时断言有余量。

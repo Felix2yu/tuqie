@@ -37,7 +37,8 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 ## 容器化部署
 
 镜像是装配式的：统一 CI（reusable-image）先编出 `bin/tuqie`，Dockerfile 只做运行时拼装，
-所以本地构建镜像前要先生成二进制（`build.sh` 产的是宿主平台的，Linux 目标还得带 `-tags nodynamic`，原因见「图片格式」）：
+所以本地构建镜像前要先生成二进制（`build.sh` 已带 `-tags nodynamic`，但它产的是宿主平台的二进制，
+给 Linux 镜像用还得自己交叉编译）：
 
 ```sh
 ./build.sh
@@ -164,7 +165,8 @@ AVIF 与 JXL 由我们在编码后补进容器，见「输出各档的实测」�
 但纯 Go 不等于静态：`gen2brain/avif` 默认还编进一条 `purego` 的 `dlopen` 路径（`avif_dynamic.go`，tag `!nodynamic`），
 它声明 libc 符号，于是 `CGO_ENABLED=0` 编出的 linux/amd64 仍带 `PT_INTERP = /lib64/ld-linux-x86-64.so.2` 与
 `DT_NEEDED = libc.so.6 / libdl.so.2 / libpthread.so.0`——装配进 alpine（musl）就 execve ENOENT、容器启动即崩，
-而编译和测试全程是绿的。所以 CI 编镜像那一步带 `-tags nodynamic`，只留 wazero 那条 WASM 路：线上本来也没有
+而编译和测试全程是绿的。所以 `build.sh` 与 CI 的测试、镜像构建都带 `-tags nodynamic`，只留 wazero 那条 WASM 路
+（Release 的 5 平台产物没带，glibc 主机上照常能跑，musl 主机不行）：线上本来也没有
 libavif 可供 dlopen，关掉它不改变任何可观测的行为，`go test -tags nodynamic ./...` 全绿。
 
 代价写在二进制上（linux/amd64，`-trimpath -s -w`）：只带标准库时 7.7MB，加上这三个是 12.9MB（`nodynamic`，
