@@ -7,11 +7,11 @@ type Props = {
   imageWidth: number;
   imageHeight: number;
   bands: Band[];
-  /** Bands left out of the export; the rest are numbered without them. */
-  skipped: Set<number>;
+  /** Bands left out of the export, by their id; the rest are numbered without them. */
+  skipped: Set<string>;
   /** The fixed thumbnail dimension: width for rows, height for columns. */
   thumbSize?: number;
-  onToggleSkip: (index: number) => void;
+  onToggleSkip: (id: string) => void;
   onPick: (band: Band) => void;
 };
 
@@ -33,17 +33,17 @@ export default function PiecesGrid({
 
   // Export numbers run over the kept pieces only, so excluding one closes the gap
   // instead of leaving a hole in the sequence.
-  const ordinals = new Map<number, number>();
-  for (const b of bands) if (!skipped.has(b.index)) ordinals.set(b.index, ordinals.size);
+  const ordinals = new Map<string, number>();
+  for (const b of bands) if (!skipped.has(b.id)) ordinals.set(b.id, ordinals.size);
 
   return (
     <div className="flex gap-2 overflow-x-auto pb-1">
       {bands.map((b) => {
         const box = Math.max(14, Math.min(200, b.size * scale));
-        const out = skipped.has(b.index);
-        const ordinal = ordinals.get(b.index);
+        const out = skipped.has(b.id);
+        const ordinal = ordinals.get(b.id);
         return (
-          <figure key={b.index} className="shrink-0">
+          <figure key={b.id} className="shrink-0">
             <div className="relative">
               <button
                 type="button"
@@ -65,7 +65,7 @@ export default function PiecesGrid({
                 type="button"
                 aria-pressed={out}
                 title={out ? '这张重新计入导出' : '导出时跳过这一张'}
-                onClick={() => onToggleSkip(b.index)}
+                onClick={() => onToggleSkip(b.id)}
                 className={`absolute right-1 top-1 grid h-5 w-5 place-content-center rounded text-[11px] ${
                   out ? 'bg-rose-500/80 text-white' : 'bg-ink-900/85 text-ink-400 hover:text-slate-200'
                 }`}

@@ -3,7 +3,16 @@ import type { Axis, Candidate, Format } from '../types';
 // A piece thinner than this is almost certainly a stray line, not a photo.
 export const MIN_PIECE_PX = 30;
 
-export type Band = { index: number; from: number; to: number; size: number };
+/** A cut line. The id is what the user's edits stick to: a detected line keeps
+ *  the id of the candidate it came from, so the sensitivity slider can take it
+ *  away and bring back the same line; a line drawn or dragged by hand has an id of
+ *  its own and keeps it however far it moves. */
+export type Cut = { id: string; pos: number };
+
+/** One output piece. Its id is the line it starts after, or "head" for the first,
+ *  so "skip this one" keeps meaning the same photo while lines above it are added,
+ *  deleted or dragged. */
+export type Band = { id: string; index: number; from: number; to: number; size: number };
 
 /** How a regular grid of cuts is asked for: a number of pieces, or a piece size. */
 export type SplitMode = 'count' | 'length';
@@ -47,16 +56,36 @@ export function normalize(cuts: number[], length: number): number[] {
 export function resolveCuts(
   candidates: Candidate[],
   threshold: number,
-  removed: number[],
-  manual: number[],
+  removed: string[],
+  manual: Cut[],
   length: number,
-): number[] {
+): Cut[] {
   const gone = new Set(removed);
-  const auto =
-    threshold >= 1
-      ? []
-      : candidates.filter((c) => c.score >= threshold && !gone.has(c.pos)).map((c) => c.pos);
-  return normalize([...auto, ...manual.filter((p) => !gone.has(p))], length);
+  const auto: Cut[] = [];
+  if (threshold < 1) {
+    candidates.forEach((c, i) => {
+      const id = `a${i}`;
+      if (c.score >= threshold && !gone.has(id)) auto.push({ id, pos: c.pos });
+    });
+  }
+  return normalizeCuts([...auto, ...manual.filter((m) => !gone.has(m.id))], length);
+}
+
+/** Rounds positions, keeps them inside the picture, and drops any line that lands
+ *  within MIN_PIECE_PX of the one before it. When a hand-drawn line collides with
+ *  a detected one the hand-drawn wins: the user put it there deliberately. */
+export function normalizeCuts(cuts: Cut[], length: number): Cut[] {
+  const sorted = cuts
+    .map((c) => ({ id: c.id, pos: Math.round(c.pos) }))
+    .filter((c) => c.pos >= MIN_PIECE_PX && c.pos <= length - MIN_PIECE_PX)
+    .sort((a, b) => a.pos - b.pos);
+  const out: Cut[] = [];
+  for (const c of sorted) {
+    const prev = out[out.length - 1];
+    if (!prev || c.pos - prev.pos >= MIN_PIECE_PX) out.push(c);
+    else if (prev.id.startsWith('a') && c.id.startsWith('m')) out[out.length - 1] = c;
+  }
+  return out;
 }
 
 /** N equal bands need N-1 interior lines. Rounding each one on its own keeps the
@@ -77,15 +106,17 @@ export function fixedCuts(length: number, step: number): number[] {
   return normalize(out, length);
 }
 
-export function bandsFromCuts(cuts: number[], length: number): Band[] {
-  if (cuts.length === 0) return [{ index: 0, from: 0, to: length, size: length }];
+export function bandsFromCuts(cuts: Cut[], length: number): Band[] {
+  if (cuts.length === 0) return [{ id: 'head', index: 0, from: 0, to: length, size: length }];
   const bands: Band[] = [];
   let prev = 0;
-  cuts.forEach((p, i) => {
-    bands.push({ index: i, from: prev, to: p, size: p - prev });
-    prev = p;
+  let start = 'head';
+  cuts.forEach((c, i) => {
+    bands.push({ id: start, index: i, from: prev, to: c.pos, size: c.pos - prev });
+    prev = c.pos;
+    start = c.id;
   });
-  bands.push({ index: cuts.length, from: prev, to: length, size: length - prev });
+  bands.push({ id: start, index: cuts.length, from: prev, to: length, size: length - prev });
   return bands;
 }
 
@@ -97,39 +128,36 @@ export function clampCut(pos: number, cuts: number[], index: number, length: num
 }
 
 /**
- * What a drag that ended on `pos` means for the two lists the lines are built
- * from. The detected line the user moved away from has to stay out of the way,
- * and the position the line lands on has to stop being one they deleted —
- * otherwise dragging one line onto the spot another one came from loses both.
- * Returns null when the line did not actually move.
+ * What releasing a dragged line means. A hand-drawn line simply moves and keeps
+ * its identity. A detected line is left behind and banned, so the sensitivity
+ * slider cannot put it back under the line the user just moved, and it carries on
+ * as a hand-drawn line with an id of its own. Returns null when nothing moved.
  */
 export function applyMove(
-  cuts: number[],
-  index: number,
+  cuts: Cut[],
+  id: string,
   pos: number,
   length: number,
-  manual: number[],
-  removed: number[],
-): { manual: number[]; removed: number[] } | null {
-  const old = cuts[index];
-  if (old === undefined) return null;
-  const next = clampCut(pos, cuts, index, length);
-  if (next === old) return null;
-  // A position the user invented is simply left behind. Only a detected line gets
-  // banned, and banning it by position is what keeps the threshold from putting it
-  // back the moment the drag ends.
-  const leftIsManual = manual.includes(old);
-  const kept = removed.filter((p) => p !== next);
-  // Landing on a deleted detection brings that one back, so the dragged line does
-  // not also need its own entry there — writing both would show two lines where
-  // the user sees one, and the next drag would leave the resurrected one behind.
-  const resurrects = kept.length !== removed.length;
+  manual: Cut[],
+  removed: string[],
+  nextId: string,
+): { manual: Cut[]; removed: string[] } | null {
+  const index = cuts.findIndex((c) => c.id === id);
+  if (index < 0) return null;
+  const next = clampCut(pos, cuts.map((c) => c.pos), index, length);
+  if (cuts[index].pos === next) return null;
+  if (id.startsWith('m')) {
+    return {
+      manual: normalizeCuts(
+        manual.map((m) => (m.id === id ? { ...m, pos: next } : m)),
+        length,
+      ),
+      removed,
+    };
+  }
   return {
-    manual: normalize(
-      [...manual.filter((p) => p !== old && p !== next), ...(resurrects ? [] : [next])],
-      length,
-    ),
-    removed: !leftIsManual && !kept.includes(old) ? [...kept, old] : kept,
+    manual: normalizeCuts([...manual, { id: nextId, pos: next }], length),
+    removed: [...removed, id],
   };
 }
 

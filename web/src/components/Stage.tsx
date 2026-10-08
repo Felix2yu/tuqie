@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { axisLength, positionOf } from '../lib/cuts';
+import { axisLength, positionOf, type Cut } from '../lib/cuts';
 import type { Axis } from '../types';
 
 type Props = {
@@ -7,13 +7,13 @@ type Props = {
   axis: Axis;
   imageWidth: number;
   imageHeight: number;
-  cuts: number[];
+  cuts: Cut[];
   fit: 'fill' | 'page';
   onAdd: (pos: number) => void;
-  onMove: (index: number, pos: number) => void;
+  onMove: (id: string, pos: number) => void;
   /** The released position of a drag, or a typed one: the only moment a move is kept. */
-  onCommit: (index: number, pos: number) => void;
-  onRemove: (pos: number) => void;
+  onCommit: (id: string, pos: number) => void;
+  onRemove: (id: string) => void;
   onViewport?: (window: [number, number]) => void;
 };
 
@@ -32,10 +32,10 @@ export default function Stage({
 }: Props) {
   const img = useRef<HTMLImageElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<number | null>(null);
+  const [drag, setDrag] = useState<string | null>(null);
   const dragTo = useRef<number | null>(null);
   const [pageBox, setPageBox] = useState<{ w: number; h: number } | null>(null);
-  const [edit, setEdit] = useState<{ index: number; text: string } | null>(null);
+  const [edit, setEdit] = useState<{ id: string; text: string } | null>(null);
 
   // A horizontal stitch is measured across the width and cut by vertical lines.
   const across = axis === 'x';
@@ -112,9 +112,9 @@ export default function Stage({
   const commitEdit = () => {
     if (!edit) return;
     const digits = edit.text.match(/\d+/);
-    const index = edit.index;
+    const id = edit.id;
     setEdit(null);
-    if (digits) onCommit(index, Number(digits[0]));
+    if (digits) onCommit(id, Number(digits[0]));
   };
 
   // Capture can fail on a pointer the browser already released, and then a finger
@@ -161,33 +161,33 @@ export default function Stage({
               onDoubleClick={(e) => onAdd(posAt(e.clientX, e.clientY))}
             />
 
-            {cuts.map((pos, i) => (
+            {cuts.map((cut, i) => (
               <div
-                key={i}
+                key={cut.id}
                 className={
                   across
                     ? 'grab absolute inset-y-0 -ml-[17px] w-[34px] cursor-ew-resize'
                     : 'grab absolute inset-x-0 -mt-[17px] h-[34px] cursor-ns-resize'
                 }
-                style={across ? { left: `${positionOf(pos, length)}%` } : { top: `${positionOf(pos, length)}%` }}
+                style={across ? { left: `${positionOf(cut.pos, length)}%` } : { top: `${positionOf(cut.pos, length)}%` }}
                 onPointerDown={(e) => {
                   e.preventDefault();
                   capture(e);
-                  setDrag(i);
+                  setDrag(cut.id);
                   dragTo.current = null;
                 }}
                 onPointerMove={(e) => {
-                  if (drag !== i) return;
+                  if (drag !== cut.id) return;
                   dragTo.current = posAt(e.clientX, e.clientY);
-                  onMove(i, dragTo.current);
+                  onMove(cut.id, dragTo.current);
                 }}
                 onPointerUp={() => {
-                  if (dragTo.current !== null) onCommit(i, dragTo.current);
+                  if (dragTo.current !== null) onCommit(cut.id, dragTo.current);
                   dragTo.current = null;
                   setDrag(null);
                 }}
                 onPointerCancel={() => {
-                  if (dragTo.current !== null) onCommit(i, dragTo.current);
+                  if (dragTo.current !== null) onCommit(cut.id, dragTo.current);
                   dragTo.current = null;
                   setDrag(null);
                 }}
@@ -197,20 +197,20 @@ export default function Stage({
                     across
                       ? 'inset-y-0 left-1/2 w-[2px] -translate-x-1/2'
                       : 'inset-x-0 top-1/2 h-[2px] -translate-y-1/2'
-                  } ${drag === i ? 'bg-accent' : 'bg-accent/75'}`}
+                  } ${drag === cut.id ? 'bg-accent' : 'bg-accent/75'}`}
                 />
                 <div
                   className={`absolute flex items-center gap-1 ${
                     across ? 'left-1/2 top-1 -translate-x-1/2' : 'left-1 top-1/2 -translate-y-1/2'
                   }`}
                 >
-                  {edit?.index === i ? (
+                  {edit?.id === cut.id ? (
                     <input
                       type="text"
                       inputMode="numeric"
                       autoFocus
                       value={edit.text}
-                      onChange={(e) => setEdit({ index: i, text: e.target.value })}
+                      onChange={(e) => setEdit({ id: cut.id, text: e.target.value })}
                       onBlur={commitEdit}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') commitEdit();
@@ -228,11 +228,11 @@ export default function Stage({
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setEdit({ index: i, text: String(pos) });
+                        setEdit({ id: cut.id, text: String(cut.pos) });
                       }}
                       className="rounded bg-ink-900/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent hover:bg-ink-900"
                     >
-                      {i + 1} · {pos}px
+                      {i + 1} · {cut.pos}px
                     </button>
                   )}
                   <button
@@ -241,7 +241,7 @@ export default function Stage({
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
-                      onRemove(pos);
+                      onRemove(cut.id);
                     }}
                     className="grid h-6 w-6 place-content-center rounded bg-ink-900/90 text-xs text-rose-300 active:bg-rose-500/30"
                   >

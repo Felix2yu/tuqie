@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { analyze as analyzeFile, sliceUrl } from './api';
 import Controls from './components/Controls';
 import Dropzone from './components/Dropzone';
@@ -15,13 +15,14 @@ import {
   clampCut,
   extFor,
   namePad,
-  normalize,
+  normalizeCuts,
   pieceName,
   resolveCuts,
   sanitizePrefix,
   splitCuts,
   stemOf,
   type Band,
+  type Cut,
   type Naming,
   type SplitMode,
 } from './lib/cuts';
@@ -48,14 +49,14 @@ export default function App() {
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
-  const [removed, setRemoved] = useState<number[]>([]);
-  const [manual, setManual] = useState<number[]>([]);
+  const [removed, setRemoved] = useState<string[]>([]);
+  const [manual, setManual] = useState<Cut[]>([]);
   // Where a line being dragged currently is. Only the released position becomes a
   // cut: banning every pixel the pointer passed over is how lines went missing.
-  const [drag, setDrag] = useState<{ index: number; pos: number } | null>(null);
+  const [drag, setDrag] = useState<{ id: string; pos: number } | null>(null);
   const [splitMode, setSplitMode] = useState<SplitMode>('count');
   const [splitValue, setSplitValue] = useState(4);
-  const [skipped, setSkipped] = useState<number[]>([]);
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [naming, setNaming] = useState<Naming>({ prefix: '', start: 1 });
   const [fit, setFit] = useState<'fill' | 'page'>('fill');
   const [settings, setSettings] = useState<Settings>({ format: 'jpeg', quality: 90 });
@@ -63,7 +64,10 @@ export default function App() {
 
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
-  const [zoom, setZoom] = useState<Band | null>(null);
+  // The id of the piece the lightbox is showing, not a snapshot of it: the crop,
+  // the number and the name are read from the live list every render.
+  const [zoomId, setZoomId] = useState<string | null>(null);
+  const lineSeq = useRef(0);
 
   const shareAvailable = useMemo(() => canShareFiles(), []);
   const axis = analysis?.axis ?? 'y';
@@ -75,18 +79,26 @@ export default function App() {
     [analysis, threshold, removed, manual, length],
   );
   const cuts = useMemo(() => {
-    if (!drag || drag.index >= baseCuts.length) return baseCuts;
+    if (!drag) return baseCuts;
+    const i = baseCuts.findIndex((c) => c.id === drag.id);
+    if (i < 0) return baseCuts;
     const next = [...baseCuts];
-    next[drag.index] = clampCut(drag.pos, baseCuts, drag.index, length);
+    next[i] = { ...next[i], pos: clampCut(drag.pos, baseCuts.map((c) => c.pos), i, length) };
     return next;
   }, [drag, baseCuts, length]);
   const bands = useMemo(() => bandsFromCuts(cuts, length), [cuts, length]);
   const skipSet = useMemo(() => new Set(skipped), [skipped]);
   // Export numbering runs over the kept pieces, so dropping one closes the gap.
-  const exported = useMemo(() => bands.filter((b) => !skipSet.has(b.index)), [bands, skipSet]);
-  const ordinalOf = useCallback(
-    (bandIndex: number) => exported.filter((b) => b.index < bandIndex).length,
-    [exported],
+  const exported = useMemo(() => bands.filter((b) => !skipSet.has(b.id)), [bands, skipSet]);
+  const ordinals = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const b of exported) m.set(b.id, m.size);
+    return m;
+  }, [exported]);
+  const ordinalOf = useCallback((band: Band) => ordinals.get(band.id) ?? 0, [ordinals]);
+  const zoomBand = useMemo(
+    () => (zoomId === null ? null : (bands.find((b) => b.id === zoomId) ?? null)),
+    [zoomId, bands],
   );
   const keptCount = useMemo(
     () =>
@@ -110,7 +122,7 @@ export default function App() {
     setDrag(null);
     setStatus(null);
     setUploadError(null);
-    setZoom(null);
+    setZoomId(null);
   };
 
   const handleFile = async (file: File) => {
@@ -138,24 +150,27 @@ export default function App() {
 
   const addCut = (pos: number) => {
     if (!analysis) return;
-    if (cuts.some((c) => Math.abs(c - pos) < MIN_PIECE_PX)) return;
-    setManual((m) => normalize([...m, pos], length));
+    if (cuts.some((c) => Math.abs(c.pos - pos) < MIN_PIECE_PX)) return;
+    setManual((m) => normalizeCuts([...m, { id: `m${++lineSeq.current}`, pos }], length));
     setStatus(null);
   };
 
-  const moveCut = (index: number, pos: number) => setDrag({ index, pos });
+  const moveCut = (id: string, pos: number) => setDrag({ id, pos });
 
-  const commitCut = (index: number, pos: number) => {
+  const commitCut = (id: string, pos: number) => {
     setDrag(null);
-    const moved = applyMove(baseCuts, index, pos, length, manual, removed);
+    const moved = applyMove(baseCuts, id, pos, length, manual, removed, `m${++lineSeq.current}`);
     if (!moved) return;
     setManual(moved.manual);
     setRemoved(moved.removed);
   };
 
-  const removeCut = (pos: number) => {
-    setRemoved((r) => (r.includes(pos) ? r : [...r, pos]));
-    setManual((m) => m.filter((v) => v !== pos));
+  const removeCut = (id: string) => {
+    if (id.startsWith('m')) {
+      setManual((m) => m.filter((c) => c.id !== id));
+      return;
+    }
+    setRemoved((r) => (r.includes(id) ? r : [...r, id]));
   };
 
   // A regular grid is what the user asked for, so it replaces the detected lines
@@ -170,7 +185,7 @@ export default function App() {
     }
     setThreshold(1);
     setRemoved([]);
-    setManual(next);
+    setManual(next.map((pos) => ({ id: `m${++lineSeq.current}`, pos })));
     setDrag(null);
     setStatus({
       tone: 'ok',
@@ -181,8 +196,8 @@ export default function App() {
     });
   };
 
-  const toggleSkip = (index: number) =>
-    setSkipped((s) => (s.includes(index) ? s.filter((v) => v !== index) : [...s, index]));
+  const toggleSkip = (id: string) =>
+    setSkipped((s) => (s.includes(id) ? s.filter((v) => v !== id) : [...s, id]));
 
   const exportPieces = async (): Promise<void> => {
     if (!analysis) return;
@@ -237,8 +252,8 @@ export default function App() {
       const blob = await zipPieces(
         analysis.id,
         analysis.axis,
-        cuts,
-        skipped,
+        cuts.map((c) => c.pos),
+        bands.reduce<number[]>((acc, b, i) => (skipSet.has(b.id) ? [...acc, i] : acc), []),
         naming,
         settings.format,
         settings.quality,
@@ -357,28 +372,28 @@ export default function App() {
               bands={bands}
               skipped={skipSet}
               onToggleSkip={toggleSkip}
-              onPick={setZoom}
+              onPick={(b) => setZoomId(b.id)}
             />
           </div>
-          {zoom && (
+          {zoomBand && (
             <Lightbox
               src={sliceUrl(
                 analysis.id,
                 analysis.axis,
-                zoom.from,
-                zoom.to,
-                zoom.index,
+                zoomBand.from,
+                zoomBand.to,
+                zoomBand.index,
                 settings.format,
                 settings.quality,
               )}
               name={pieceName(
                 naming,
-                ordinalOf(zoom.index),
+                ordinalOf(zoomBand),
                 extFor(settings.format),
                 namePad(naming.start, exported.length),
               )}
-              label={`${ordinalOf(zoom.index) + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoom)}`}
-              onClose={() => setZoom(null)}
+              label={`${ordinalOf(zoomBand) + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoomBand)}`}
+              onClose={() => setZoomId(null)}
             />
           )}
           {isIOS() && !shareAvailable && (

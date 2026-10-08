@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { positionOf } from '../lib/cuts';
+import { type Cut } from '../lib/cuts';
 import type { Axis, Candidate, Signal } from '../types';
 
 type Props = {
@@ -7,12 +7,12 @@ type Props = {
   /** How far cut positions run: height for a vertical stitch, width for a horizontal one. */
   length: number;
   signal: Signal;
-  cuts: number[];
+  cuts: Cut[];
   candidates: Candidate[];
   viewport: [number, number];
   onAdd: (pos: number) => void;
-  onMove: (index: number, pos: number) => void;
-  onCommit: (index: number, pos: number) => void;
+  onMove: (id: string, pos: number) => void;
+  onCommit: (id: string, pos: number) => void;
 };
 
 const HIT_PX = 12;
@@ -21,7 +21,7 @@ const HIT_PX = 12;
 export default function Rail({ axis, length, signal, cuts, candidates, viewport, onAdd, onMove, onCommit }: Props) {
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [drag, setDrag] = useState<number | null>(null);
+  const [drag, setDrag] = useState<string | null>(null);
   const dragTo = useRef<number | null>(null);
 
   // The profile runs along the strip's long side: down for rows, across for columns.
@@ -69,7 +69,7 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
 
       // Lines the threshold currently hides, so the user can see what they gave up.
       ctx.fillStyle = 'rgba(148,163,184,0.55)';
-      const taken = new Set(cuts);
+      const taken = new Set(cuts.map((c) => c.pos));
       for (const c of candidates) {
         if (taken.has(c.pos)) continue;
         const p = (c.pos / length) * span;
@@ -77,8 +77,8 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
         else ctx.fillRect(0, p - 0.5, w, 1);
       }
 
-      cuts.forEach((pos, i) => {
-        const p = positionOf(pos, length) / 100 * span;
+      cuts.forEach((cut, i) => {
+        const p = (cut.pos / length) * span;
         ctx.fillStyle = '#5eead4';
         if (along) {
           ctx.fillRect(p - 1, 0, 2, h);
@@ -119,18 +119,20 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
     return Math.round(ratio * length);
   };
 
-  const nearestCut = (pos: number) => {
+  // The line's own id, not its index: the list can change under a drag, and an
+  // index would then grab a different line.
+  const nearestCut = (pos: number): string | null => {
     const boxPx = (along ? box.current?.clientWidth : box.current?.clientHeight) || 1;
     const tolerance = (HIT_PX / boxPx) * length;
-    let best = -1;
+    let best: string | null = null;
     let bestGap = Infinity;
-    cuts.forEach((c, i) => {
-      const gap = Math.abs(c - pos);
+    for (const c of cuts) {
+      const gap = Math.abs(c.pos - pos);
       if (gap < tolerance && gap < bestGap) {
         bestGap = gap;
-        best = i;
+        best = c.id;
       }
-    });
+    }
     return best;
   };
 
@@ -168,9 +170,9 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
           /* a pointer released mid-tap makes capture throw; the tap still counts */
         }
         const pos = posAt(e.clientX, e.clientY);
-        const i = nearestCut(pos);
-        if (i >= 0) {
-          setDrag(i);
+        const hit = nearestCut(pos);
+        if (hit !== null) {
+          setDrag(hit);
           dragTo.current = null;
         } else {
           onAdd(pos);
