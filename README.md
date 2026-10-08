@@ -37,7 +37,7 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 ## 容器化部署
 
 镜像是装配式的：统一 CI（reusable-image）先编出 `bin/tuqie`，Dockerfile 只做运行时拼装，
-所以本地构建镜像前要先生成二进制：
+所以本地构建镜像前要先生成二进制（`build.sh` 产的是宿主平台的，Linux 目标还得带 `-tags nodynamic`，原因见「图片格式」）：
 
 ```sh
 ./build.sh
@@ -45,8 +45,8 @@ docker build -t tuqie .
 docker run -d --name tuqie -p 7423:7423 -v tuqie-data:/data tuqie
 ```
 
-CI 通过后会推到 `ghcr.io/felix2yu/tuqie`。二进制静态编译（CGO off），前端已内嵌，
-跑的仍是上面那个单二进制，所以参数照旧往后传就行：
+CI 通过后会推到 `ghcr.io/felix2yu/tuqie`。二进制是纯 Go 静态编译（CGO off 且带 `nodynamic`，原因见「图片格式」），
+前端已内嵌，跑的仍是上面那个单二进制，所以参数照旧往后传就行：
 
 ```sh
 docker run --rm tuqie -ttl 10m
@@ -159,11 +159,17 @@ AVIF 与 JXL 由我们在编码后补进容器，见「输出各档的实测」�
 ## 图片格式
 
 输入认 PNG / JPEG / GIF / HEIC / AVIF / JXL，输出五选一：PNG / JPEG / HEIC / AVIF / JXL。
-前三种输入走标准库，后三种各带一个纯 Go 编解码器（`gen2brain/h265`、`gen2brain/avif`、`gen2brain/jxl`），
-`CGO_ENABLED=0` 照旧，交叉编译与镜像都不受影响。
+前三种输入走标准库，后三种各带一个纯 Go 编解码器（`gen2brain/h265`、`gen2brain/avif`、`gen2brain/jxl`）。
 
-代价写在二进制上（linux/amd64，`-s -w`）：只带标准库时 7.7MB，加上这三个是 13.2MB，多出来的 5.4MB
-里 AVIF 占大头——它的编解码器是编成 WASM 的 libaom，由 `wazero` 在进程里跑，这是纯 Go 路线里唯一能读懂
+但纯 Go 不等于静态：`gen2brain/avif` 默认还编进一条 `purego` 的 `dlopen` 路径（`avif_dynamic.go`，tag `!nodynamic`），
+它声明 libc 符号，于是 `CGO_ENABLED=0` 编出的 linux/amd64 仍带 `PT_INTERP = /lib64/ld-linux-x86-64.so.2` 与
+`DT_NEEDED = libc.so.6 / libdl.so.2 / libpthread.so.0`——装配进 alpine（musl）就 execve ENOENT、容器启动即崩，
+而编译和测试全程是绿的。所以 CI 编镜像那一步带 `-tags nodynamic`，只留 wazero 那条 WASM 路：线上本来也没有
+libavif 可供 dlopen，关掉它不改变任何可观测的行为，`go test -tags nodynamic ./...` 全绿。
+
+代价写在二进制上（linux/amd64，`-trimpath -s -w`）：只带标准库时 7.7MB，加上这三个是 12.9MB（`nodynamic`，
+13,476,000 字节；留着那条 dlopen 路径是 13.2MB），多出来的 5.2MB 里 AVIF 占大头——它的编解码器是编成 WASM 的
+libaom，由 `wazero` 在进程里跑，这是纯 Go 路线里唯一能读懂
 libheif 产出的 AVIF 的实现（另一条纯 Go 路线 `goavif` 实测读不出来）；HEIC 与 JXL 两个纯 Go 实现各约 +0.9MB。
 许可随之从"只有标准库"变成 MIT ×2 加 JPEG XL Project 的 Apache-2.0（含专利授权）。
 
