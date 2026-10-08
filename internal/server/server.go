@@ -61,7 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": true})
 	})
-	mux.Handle("/", http.FileServer(http.FS(s.web)))
+	mux.Handle("/", static(s.web))
 
 	var h http.Handler = mux
 	h = s.limitUploads(h)
