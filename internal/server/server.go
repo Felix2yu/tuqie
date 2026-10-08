@@ -417,10 +417,16 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		}
 		written++
 	}
+	if written == 0 {
+		// Nothing has reached the stream yet, so this can still be an honest
+		// error rather than an empty archive that downloads as if it worked.
+		writeErr(w, http.StatusInternalServerError, "切片一张都没能生成，请换一种格式或重试")
+		return
+	}
 	if err := zw.Close(); err != nil {
 		log.Printf("export: close: %v", err)
 	}
-	log.Printf("export: %s -> %d slices", p.ID, written)
+	log.Printf("export: %s -> %d of %d slices", p.ID, written, len(kept))
 }
 
 // BandsFromCuts turns interior cut lines into [start,end) bands along ax.

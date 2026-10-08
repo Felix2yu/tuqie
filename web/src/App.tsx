@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { analyze as analyzeFile, sliceUrl } from './api';
+import { analyze as analyzeFile, sliceUrl, zipCount } from './api';
 import Controls from './components/Controls';
 import Dropzone from './components/Dropzone';
 import Lightbox from './components/Lightbox';
@@ -46,6 +46,9 @@ const DEFAULT_THRESHOLD = 0.45;
 export default function App() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [uploading, setUploading] = useState(false);
+  // setUploading only takes effect on the next render, and a triple drop happens
+  // inside one tick: this ref is what actually keeps a second upload from starting.
+  const uploadingRef = useRef(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
@@ -63,6 +66,9 @@ export default function App() {
   const [viewport, setViewport] = useState<[number, number]>([0, 1]);
 
   const [busy, setBusy] = useState<string | null>(null);
+  // Disabling a button waits for the next render, so a double click in the same
+  // tick would start two exports; this ref answers before React gets a say.
+  const running = useRef(false);
   const [status, setStatus] = useState<Status | null>(null);
   // The id of the piece the lightbox is showing, not a snapshot of it: the crop,
   // the number and the name are read from the live list every render.
@@ -126,6 +132,8 @@ export default function App() {
   };
 
   const handleFile = async (file: File) => {
+    if (uploadingRef.current) return;
+    uploadingRef.current = true;
     setUploading(true);
     setUploadError(null);
     try {
@@ -134,6 +142,8 @@ export default function App() {
       // A wide strip of photos is read side to side, so show all of its height
       // rather than stretching it across the viewport.
       setFit(res.axis === 'x' ? 'page' : 'fill');
+      setThreshold(DEFAULT_THRESHOLD);
+      setViewport([0, 1]);
       setRemoved([]);
       setManual([]);
       setSkipped([]);
@@ -144,6 +154,7 @@ export default function App() {
     } catch (err) {
       setUploadError((err as Error).message);
     } finally {
+      uploadingRef.current = false;
       setUploading(false);
     }
   };
@@ -233,6 +244,8 @@ export default function App() {
   };
 
   const onSaveToPhotos = async () => {
+    if (running.current) return;
+    running.current = true;
     setBusy('正在准备…');
     setStatus(null);
     try {
@@ -240,12 +253,14 @@ export default function App() {
     } catch (err) {
       setStatus({ tone: 'err', text: (err as Error).message });
     } finally {
+      running.current = false;
       setBusy(null);
     }
   };
 
   const onDownloadZip = async () => {
-    if (!analysis) return;
+    if (!analysis || running.current) return;
+    running.current = true;
     setBusy('正在打包 ZIP…');
     setStatus(null);
     try {
@@ -260,11 +275,16 @@ export default function App() {
       );
       const prefix = sanitizePrefix(naming.prefix) || stemOf(analysis.filename);
       downloadBlob(blob, `${prefix}-slices.zip`);
-      const left = bands.length - exported.length;
-      setStatus({
-        tone: 'ok',
-        text: `ZIP 已下载，共 ${exported.length} 张${left ? `（跳过 ${left} 张）` : ''}`,
-      });
+      const asked = exported.length;
+      const got = await zipCount(blob);
+      if (got === null) {
+        setStatus({ tone: 'warn', text: `ZIP 已下载，但读不到它的目录，可能不完整（应有 ${asked} 张）` });
+      } else if (got < asked) {
+        setStatus({ tone: 'warn', text: `ZIP 里是 ${got} 张，另有 ${asked - got} 张没能生成` });
+      } else {
+        const left = bands.length - asked;
+        setStatus({ tone: 'ok', text: `ZIP 已下载，共 ${got} 张${left ? `（跳过 ${left} 张）` : ''}` });
+      }
     } catch (err) {
       setStatus({ tone: 'err', text: (err as Error).message });
     } finally {

@@ -58,6 +58,23 @@ export async function fetchSlice(
   return res.blob();
 }
 
+/**
+ * How many files the archive the server actually wrote holds, read from its
+ * end-of-central-directory record. The export streams, so a band that fails to
+ * encode is left out and the response is still a 200; the count is what gives the
+ * browser a way to notice. Null means the record is not there at all, which is a
+ * truncated download.
+ */
+export async function zipCount(blob: Blob): Promise<number | null> {
+  const tail = await blob.slice(Math.max(0, blob.size - 66000)).arrayBuffer();
+  const view = new DataView(tail);
+  for (let at = tail.byteLength - 22; at >= 0; at--) {
+    if (view.getUint32(at, true) !== 0x06054b50) continue;
+    return view.getUint16(at + 10, true);
+  }
+  return null;
+}
+
 export async function fetchZip(
   id: string,
   axis: Axis,

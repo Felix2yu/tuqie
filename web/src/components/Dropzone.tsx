@@ -26,8 +26,13 @@ export default function Dropzone({ busy, error, onFile }: Props) {
   const [over, setOver] = useState(false);
   const send = useRef(onFile);
   send.current = onFile;
+  // A drop or a click that lands while an upload is in flight would start a second
+  // analyze, and whichever came back last would replace the picture in view.
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
 
   const pick = (files: FileList | null) => {
+    if (busyRef.current) return;
     const file = files?.[0];
     if (file) send.current(file);
   };
@@ -62,6 +67,7 @@ export default function Dropzone({ busy, error, onFile }: Props) {
 
       <button
         type="button"
+        disabled={busy}
         onClick={() => input.current?.click()}
         onDragOver={(e) => {
           e.preventDefault();
