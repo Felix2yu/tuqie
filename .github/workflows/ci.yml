@@ -46,8 +46,11 @@ jobs:
       main-package: ./cmd/tuqie
       binary-name: tuqie
       image-name: ghcr.io/felix2yu/tuqie
-      # 零第三方依赖、CGO off：静态二进制，装配进 alpine（musl）运行镜像不会启动即崩
       cgo: off
+      # CGO_ENABLED=0 不等于静态：gen2brain/avif 默认编进 purego 的 dlopen 路径，
+      # 产物仍带 PT_INTERP=/lib64/ld-linux-x86-64.so.2，扔进 alpine（musl）启动即 ENOENT。
+      # nodynamic 只留 wazero 那条 WASM 路（alpine 里本来也没有 libavif 可 dlopen）。
+      build-tags: nodynamic
       # go:embed 需要 web/dist；reusable 流程构建前端后就位在同一目录
       web-dir: web
 
