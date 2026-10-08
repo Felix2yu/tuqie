@@ -17,8 +17,16 @@ import (
 // requirePassword gates every route behind HTTP Basic auth. The username is not
 // checked: this is one shared secret for whoever runs the instance, not an
 // account system.
+//
+// /api/health is the one exception. The container's own health check has no way
+// to carry a password, and what it answers — that a process is up — says nothing
+// about whatever is on the disk behind it.
 func requirePassword(want string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
 		_, got, ok := r.BasicAuth()
 		if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
 			w.Header().Set("WWW-Authenticate", `Basic realm="图切", charset="UTF-8"`)

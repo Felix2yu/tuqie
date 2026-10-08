@@ -22,7 +22,7 @@ func main() {
 	addr := flag.String("addr", ":7423", "listen address")
 	dataDir := flag.String("data", "", "directory for uploads (default: $TMPDIR/tuqie)")
 	ttl := flag.Duration("ttl", 60*time.Minute, "how long uploads are kept")
-	password := flag.String("password", "", "ask every request for this password (basic auth, any username); empty leaves the tool open")
+	password := flag.String("password", "", "ask every request but the health check for this password (basic auth, any username); empty leaves the tool open")
 	uploads := flag.Int("uploads-per-minute", 30, "uploads one client may post per minute, 0 for no limit")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()

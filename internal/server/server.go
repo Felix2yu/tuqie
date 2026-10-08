@@ -33,7 +33,8 @@ const maxUpload = 250 << 20
 // always behaved: open, and with no ceiling on uploads.
 type Config struct {
 	// Password, when set, is asked of every request through the browser's own
-	// basic-auth prompt. Empty leaves the instance open to whoever can reach it.
+	// basic-auth prompt, except the health check the container runs. Empty leaves
+	// the instance open to whoever can reach it.
 	Password string
 	// UploadsPerMinute is the sustained rate one client may post new screenshots,
 	// with a short burst on top. Zero switches the ceiling off.
