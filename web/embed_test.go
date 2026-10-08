@@ -68,11 +68,18 @@ func TestPwaShellShipsWithItsIcons(t *testing.T) {
 		t.Fatalf("manifest.json: %v", err)
 	}
 	var m struct {
-		Name     string `json:"name"`
-		StartURL string `json:"start_url"`
-		Display  string `json:"display"`
-		Icons    []struct {
+		Name        string `json:"name"`
+		ID          string `json:"id"`
+		Lang        string `json:"lang"`
+		StartURL    string `json:"start_url"`
+		Display     string `json:"display"`
+		Orientation string `json:"orientation"`
+		Icons       []struct {
 			Src string `json:"src"`
+		}
+		Screenshots []struct {
+			Src        string `json:"src"`
+			FormFactor string `json:"form_factor"`
 		}
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
@@ -81,12 +88,36 @@ func TestPwaShellShipsWithItsIcons(t *testing.T) {
 	if m.Name == "" || m.StartURL != "/" || m.Display != "standalone" {
 		t.Fatalf("manifest looks wrong: %+v", m)
 	}
+	// id pins which installed app a browser is looking at: without it the identity
+	// is derived from start_url, so changing that address would strand every copy
+	// already on a home screen. Equal to start_url keeps the derived id the same.
+	if m.ID != m.StartURL {
+		t.Fatalf("id = %q, want it pinned to start_url %q", m.ID, m.StartURL)
+	}
+	if m.Lang == "" {
+		t.Fatal("no lang, so a screen reader reads the Chinese with an English voice")
+	}
+	// A horizontal stitched screenshot is as ordinary as a vertical one, which is
+	// the whole reason this is not locked to one side.
+	if m.Orientation != "any" {
+		t.Fatalf("orientation = %q, want any", m.Orientation)
+	}
 	if len(m.Icons) == 0 {
 		t.Fatal("no icons in the manifest")
 	}
 	for _, icon := range m.Icons {
 		if _, err := fs.Stat(dist, strings.TrimPrefix(icon.Src, "/")); err != nil {
 			t.Errorf("manifest points at %s: %v", icon.Src, err)
+		}
+	}
+	// A screenshot that 404s is worse than none: the install dialog shows a broken
+	// preview for it, and only on the devices that read that field.
+	for _, shot := range m.Screenshots {
+		if shot.FormFactor != "narrow" {
+			t.Errorf("screenshot %s: form_factor = %q, want narrow", shot.Src, shot.FormFactor)
+		}
+		if _, err := fs.Stat(dist, strings.TrimPrefix(shot.Src, "/")); err != nil {
+			t.Errorf("manifest points at %s: %v", shot.Src, err)
 		}
 	}
 
