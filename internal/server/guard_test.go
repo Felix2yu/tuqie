@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,35 +12,59 @@ import (
 func TestPasswordGate(t *testing.T) {
 	handler, _ := newHandlerConfig(t, Config{Password: "sesame"})
 
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	ask := func(path, user, pass string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if pass != "" {
+			r.SetBasicAuth(user, pass)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, r)
+		return rec
+	}
+
+	// A route that reads the store rather than the one route left open.
+	rec := ask("/api/image?id=unknown", "", "")
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous: %d %s", rec.Code, rec.Body.String())
 	}
 	if got := rec.Header().Get("WWW-Authenticate"); got == "" {
 		t.Fatal("the browser prompt needs a challenge header")
 	}
-
-	get := func(user, pass string) *httptest.ResponseRecorder {
-		r := httptest.NewRequest(http.MethodGet, "/api/health", nil)
-		r.SetBasicAuth(user, pass)
-		rec := httptest.NewRecorder()
-		handler.ServeHTTP(rec, r)
-		return rec
+	if rec := ask("/api/image?id=unknown", "anyone", "sesame"); rec.Code == http.StatusUnauthorized {
+		t.Fatal("the right password should reach the route")
 	}
-	if rec := get("anyone", "sesame"); rec.Code != http.StatusOK {
-		t.Fatalf("right password: %d", rec.Code)
-	}
-	if rec := get("anyone", "sesamo"); rec.Code != http.StatusUnauthorized {
+	if rec := ask("/api/image?id=unknown", "anyone", "sesamo"); rec.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong password: %d", rec.Code)
 	}
 	// The frontend is the reason the whole handler is gated, not just the API.
-	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.SetBasicAuth("u", "sesame")
-	rec = httptest.NewRecorder()
-	handler.ServeHTTP(rec, r)
-	if rec.Code != http.StatusOK {
+	if rec := ask("/", "u", "sesame"); rec.Code != http.StatusOK {
 		t.Fatalf("index with the password: %d", rec.Code)
+	}
+	if rec := ask("/", "", ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("index without it: %d", rec.Code)
+	}
+}
+
+// TestHealthStaysReachable is what keeps the container's HEALTHCHECK from reading
+// a 401 and calling a running instance unhealthy: wget has no way to answer a
+// prompt. The one exception must not become a wider hole, so the route that
+// writes to disk is asked about in the same breath.
+func TestHealthStaysReachable(t *testing.T) {
+	handler, _ := newHandlerConfig(t, Config{Password: "sesame"})
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymous health: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"ok"`) {
+		t.Fatalf("health said %q", body)
+	}
+
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/analyze", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous upload: %d", rec.Code)
 	}
 }
 
