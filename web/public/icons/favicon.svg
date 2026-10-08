@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="图切">
+  <rect width="512" height="512" rx="110" fill="#141b24"/>
+  <rect x="150" y="76" width="212" height="150" rx="28" fill="#f2f6fa"/>
+  <rect x="150" y="286" width="212" height="150" rx="28" fill="#2dd4bf"/>
+  <path d="M86 256H426" stroke="#99f6e4" stroke-width="26" stroke-dasharray="54 40" stroke-linecap="round"/>
+</svg>

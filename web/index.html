@@ -9,7 +9,12 @@
     <meta name="theme-color" content="#080b10" />
     <meta name="description" content="把长截图拆分成多张独立照片，支持自动识别分割线和一键存入相册" />
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <!-- Legacy IE and old Edge only ever look for the .ico; give it a slot first so
+         the SVG below can win everywhere it is understood. -->
+    <link rel="alternate icon" type="image/x-icon" href="/icons/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
