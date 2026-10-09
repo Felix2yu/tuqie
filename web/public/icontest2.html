@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- 排查用页面：复刻主站 head 里除脚本外的全部图标相关声明
+     （manifest、三档 favicon 含 svg、三条 apple-touch、apple-* meta）。
+     与 icontest.html 对比即可判断毒源在 manifest/favicon 还是别处。
+     问题定位后删除。 -->
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080b10" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="alternate icon" type="image/x-icon" href="/icons/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" sizes="512x512" href="/icons/apple-touch-icon-512.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="图切" />
+    <title>B 完整测试</title>
+  </head>
+  <body>
+    <h1>B：完整图标声明</h1>
+    <p>与主站 head 一致的图标相关声明，用于定位主屏图标问题。</p>
+  </body>
+</html>
