@@ -166,3 +166,22 @@ func TestClientAddr(t *testing.T) {
 		t.Fatalf("clientAddr = %q, want the raw value back", got)
 	}
 }
+
+// The ceiling is whatever the operator set, so the size quoted back to a user who
+// went over it has to come from that number.
+func TestHumanBytes(t *testing.T) {
+	for _, c := range []struct {
+		in   int64
+		want string
+	}{
+		{512, "512 B"},
+		{1024, "1 KB"},
+		{250 << 20, "250 MB"},
+		{1<<30 + 1<<29, "1.5 GB"},
+		{1<<40 + 1<<39, "1.5 TB"},
+	} {
+		if got := humanBytes(c.in); got != c.want {
+			t.Errorf("humanBytes(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

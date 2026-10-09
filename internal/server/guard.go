@@ -1,6 +1,6 @@
-// guard.go holds the two things a tool that writes 250MB uploads to disk wants
-// when it stops living on localhost: a password, and a ceiling on how fast one
-// client can fill that disk.
+// guard.go holds the two things a tool that writes uploads to disk wants when it
+// stops living on localhost: a password, and a ceiling on how fast one client can
+// fill that disk.
 
 package server
 
@@ -19,8 +19,10 @@ import (
 // account system.
 //
 // /api/health is the one exception. The container's own health check has no way
-// to carry a password, and what it answers — that a process is up — says nothing
-// about whatever is on the disk behind it.
+// to carry a password, and what it answers — that a process is up, and what upload
+// ceiling it posted — says nothing about whatever is on the disk behind it. The
+// page needs that second half even when it has no password to give, which is how
+// the size it quotes stays the one this instance actually enforces.
 func requirePassword(want string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/health" {
@@ -137,4 +139,29 @@ func clientAddr(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// humanBytes words a byte count the way the size was typed into the config, so an
+// upload refused for its length can say what the ceiling actually is instead of a
+// number the operator never chose.
+func humanBytes(n int64) string {
+	const KiB = 1 << 10
+	if n < KiB {
+		return strconv.FormatInt(n, 10) + " B"
+	}
+	div, name := int64(KiB), "KB"
+	for _, u := range []struct {
+		div  int64
+		name string
+	}{{1 << 20, "MB"}, {1 << 30, "GB"}, {1 << 40, "TB"}} {
+		if n < u.div {
+			break
+		}
+		div, name = u.div, u.name
+	}
+	v := float64(n) / float64(div)
+	if v == math.Trunc(v) {
+		return strconv.FormatInt(int64(v), 10) + " " + name
+	}
+	return strconv.FormatFloat(v, 'f', 1, 64) + " " + name
 }

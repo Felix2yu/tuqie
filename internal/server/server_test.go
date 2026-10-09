@@ -158,6 +158,31 @@ func TestHealth(t *testing.T) {
 	if body["ok"] != true {
 		t.Fatalf("body %v", body)
 	}
+	// The frontend shows this number, so zero has to arrive as the ceiling being off.
+	if v, err := json.Marshal(body); err != nil || !strings.Contains(string(v), `"maxUpload":0`) {
+		t.Fatalf("body %s", rec.Body.String())
+	}
+}
+
+// The page cannot guess a ceiling that is set per instance, so the health check —
+// the one route a password never blocks — carries it.
+func TestHealthReportsTheConfiguredCeiling(t *testing.T) {
+	handler, _ := newHandlerConfig(t, Config{Password: "sesame", MaxUpload: 2 << 20})
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("health behind a password: %d", rec.Code)
+	}
+	var body struct {
+		OK        bool  `json:"ok"`
+		MaxUpload int64 `json:"maxUpload"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.MaxUpload != 2<<20 {
+		t.Fatalf("maxUpload = %d, want the configured ceiling: %s", body.MaxUpload, rec.Body.String())
+	}
 }
 
 func TestAnalyzeReturnsJSONAndImageRoundTrips(t *testing.T) {
@@ -595,6 +620,38 @@ func TestAnalyzeRejectsUndecodableUpload(t *testing.T) {
 	}
 	if !strings.Contains(decodeError(t, rec), "decode") {
 		t.Fatalf("body %s", rec.Body.String())
+	}
+}
+
+// An upload over the configured ceiling is refused on size alone, before the
+// decoder is asked anything, and the answer names the number the operator chose
+// rather than one the binary remembers.
+func TestAnalyzeRefusesAboveTheConfiguredCeiling(t *testing.T) {
+	handler, _ := newHandlerConfig(t, Config{MaxUpload: 1 << 10})
+	rec := postMultipart(t, handler, "/api/analyze", "file", "big.png", make([]byte, 1<<20))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeError(t, rec); !strings.Contains(got, "1 KB") {
+		t.Fatalf("error names the wrong ceiling: %q", got)
+	}
+}
+
+func TestAnalyzeAcceptsUpToTheConfiguredCeiling(t *testing.T) {
+	handler, _ := newHandlerConfig(t, Config{MaxUpload: 1 << 20})
+	upload(t, handler, testPNG(t, 8, 8))
+}
+
+// Zero means the size is simply not checked, so a payload big for a tool of this
+// size gets as far as the decoder.
+func TestAnalyzeWithoutACeilingChecksNoSize(t *testing.T) {
+	handler, _ := newHandlerConfig(t, Config{})
+	rec := postMultipart(t, handler, "/api/analyze", "file", "junk.png", make([]byte, 3<<20))
+	if rec.Code == http.StatusRequestEntityTooLarge {
+		t.Fatalf("an unset ceiling should not refuse on size: %s", rec.Body.String())
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("junk png: %d %s", rec.Code, rec.Body.String())
 	}
 }
 

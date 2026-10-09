@@ -27,8 +27,6 @@ import (
 	"tuqie/internal/store"
 )
 
-const maxUpload = 250 << 20
-
 // Config is how the server starts up. Its zero value is the tool as it has
 // always behaved: open, and with no ceiling on uploads.
 type Config struct {
@@ -39,17 +37,28 @@ type Config struct {
 	// UploadsPerMinute is the sustained rate one client may post new screenshots,
 	// with a short burst on top. Zero switches the ceiling off.
 	UploadsPerMinute int
+	// MaxUpload is how many bytes one upload may carry, a ceiling the command line
+	// sets to 35MB by default. Zero leaves the size unchecked, which means the disk
+	// is the only limit.
+	MaxUpload int64
 }
 
 type Server struct {
-	store    *store.Store
-	web      fs.FS
-	password string
-	budget   *uploadBudget
+	store     *store.Store
+	web       fs.FS
+	password  string
+	budget    *uploadBudget
+	maxUpload int64
 }
 
 func New(s *store.Store, web fs.FS, cfg Config) *Server {
-	return &Server{store: s, web: web, password: cfg.Password, budget: newUploadBudget(cfg.UploadsPerMinute)}
+	return &Server{
+		store:     s,
+		web:       web,
+		password:  cfg.Password,
+		budget:    newUploadBudget(cfg.UploadsPerMinute),
+		maxUpload: cfg.MaxUpload,
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -60,7 +69,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/slice", s.handleSlice)
 	mux.HandleFunc("POST /api/export", s.handleExport)
 	mux.HandleFunc("GET /api/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"ok": true})
+		// maxUpload is here because the drop zone would otherwise have to remember
+		// a number the operator picks per instance. Zero is the ceiling being off.
+		writeJSON(w, map[string]any{"ok": true, "maxUpload": s.maxUpload})
 	})
 	mux.Handle("/", static(s.web))
 
@@ -97,9 +108,16 @@ func takenMillis(taken exif.Date) int64 {
 }
 
 func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+	if s.maxUpload > 0 {
+		r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload)
+	}
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeErr(w, http.StatusBadRequest, "上传失败：文件过大或表单格式不正确")
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("上传失败：文件超过 %s 的上限", humanBytes(s.maxUpload)))
+			return
+		}
+		writeErr(w, http.StatusBadRequest, "上传失败：表单格式不正确")
 		return
 	}
 	defer r.MultipartForm.RemoveAll()
