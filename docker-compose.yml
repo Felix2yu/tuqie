@@ -7,12 +7,20 @@ services:
       - tuqie-data:/data
     restart: unless-stopped
 
-    # 镜像 CMD 已带默认参数（-addr :7423 -data /data -ttl 60m -uploads-per-minute 30）；
-    # 需要覆盖时在 command 里整条重写：
+    # 镜像 CMD 只写了 -data /data，其余参数走二进制里的默认值
+    # （-addr :7423 -ttl 60m -uploads-per-minute 30 -max-upload 35MB）。
+    # 调参优先用环境变量：每个 flag 都有对应的 TUQIE_*（大写、短横换下划线），
+    # 命令行显式给出的 flag 才会盖过它。
+    # environment:
+    #   - TUQIE_TTL=10m
+    #   - TUQIE_MAX_UPLOAD=200MB   # 原图比 35MB 还大时抬，0 为不限
+
+    # command 也能用，但那是整条替换镜像的 CMD，-data 这类要一并写全：
     # command: ["-addr", ":7423", "-data", "/data", "-ttl", "10m"]
 
     # 对外敞开时加一道密码（浏览器会弹认证框，用户名随意）：
-    # command: ["-addr", ":7423", "-data", "/data", "-ttl", "60m", "-password", "换成你的密码"]
+    # environment:
+    #   - TUQIE_PASSWORD=换成你的密码
 
 volumes:
   tuqie-data:

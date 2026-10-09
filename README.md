@@ -32,7 +32,12 @@ pnpm --dir web install && pnpm --dir web dev   # 终端 2：前端，http://loca
 其他参数：`-addr :7423` 监听地址，`-data` 上传目录（默认 `$TMPDIR/tuqie`），
 `-ttl 60m` 原图保留时长，`-password` 给整个站点加一道密码（见「放到别人够得着的地方」），
 `-uploads-per-minute 30` 单个客户端每分钟能上传几张（0 为不限），
+`-max-upload 35MB` 单次上传的字节上限（`0` 为不限，`50M` / `1.5G` 这样的写法也认），
 `-version` 打印版本号（CI 构建注入，本地为 `dev`）。
+
+每个参数都能用环境变量给：`-max-upload` 读 `TUQIE_MAX_UPLOAD`，规则是把 flag 名大写、短横换成下划线、
+前面加 `TUQIE_`。留空等于没设，命令行的显式写法压过环境变量——所以 `-ttl` 传了值时，
+`TUQIE_TTL` 里即便写着乱码也不会拦住启动。容器里用 `environment:` 比整条重写 `command` 省事。
 
 ## 容器化部署
 
@@ -47,10 +52,12 @@ docker run -d --name tuqie -p 7423:7423 -v tuqie-data:/data tuqie
 ```
 
 CI 通过后会推到 `ghcr.io/felix2yu/tuqie`。二进制是纯 Go 静态编译（CGO off 且带 `nodynamic`，原因见「图片格式」），
-前端已内嵌，跑的仍是上面那个单二进制，所以参数照旧往后传就行：
+前端已内嵌，跑的仍是上面那个单二进制。往镜像后面传参数是整条替换 CMD，连 `-data /data` 一起替掉，
+所以调参更稳的入口是环境变量（见上面那条规则）：
 
 ```sh
-docker run --rm tuqie -ttl 10m
+docker run --rm -e TUQIE_TTL=10m tuqie
+docker run --rm -e TUQIE_MAX_UPLOAD=600MB tuqie
 ```
 
 `/data` 里是上传的原图，`-ttl` 到期即删，用命名卷即可、不必备份；改成宿主目录 bind mount 时，
@@ -59,7 +66,8 @@ docker run --rm tuqie -ttl 10m
 ### 放到别人够得着的地方
 
 `-password 一道密码` 会给请求挂上 HTTP Basic 认证，页面本身也算，浏览器弹一次就记住后面所有调用；
-只有 `/api/health` 放行，容器那条 `HEALTHCHECK` 带不动密码，而它回的内容只说明进程活着。
+只有 `/api/health` 放行，容器那条 `HEALTHCHECK` 带不动密码，而它回的内容只说明进程活着、
+以及这台实例的上传上限是多少（首页那句「最大 X MB」就从这儿来，页面自己不知道该报几）。
 用户名不校验，只比这一道密码，比较走常数时间。限速只管 `/api/analyze`：默认每分钟 30 张，
 桶是满的开始，所以开头能连着传 7 张（突发上限取每分钟额度的四分之一，不低于 6），之后每两秒回一张；
 超了就 429 并带上 `Retry-After`。计的是 TCP 对端地址，挂在反向代理后面时访客都并入代理那一个，
@@ -178,7 +186,11 @@ accent / warn / danger），色值一律写在 `web/src/styles.css` 的两套调
 | GET | `/api/slice?id=&axis=&from=&to=&index=&format=&quality=` | 单张切片，`format` 取 jpeg / png / heic / avif / jxl，供分享前组装 File |
 | POST | `/api/export` | `{id,axis,cuts,skip,prefix,start,format,quality}` → ZIP 流，`skip` 是要排除的切片下标 |
 
-上传限制 250MB、像素上限 120MP，支持 PNG / JPEG / GIF / HEIC / AVIF / JXL（见「图片格式」），剪贴板里的截图可以直接 ⌘V / Ctrl+V 贴进来。
+上传限制默认 35MB（`-max-upload` / `TUQIE_MAX_UPLOAD` 改，`0` 为不限）、像素上限 120MP，支持 PNG / JPEG / GIF / HEIC / AVIF / JXL（见「图片格式」），剪贴板里的截图可以直接 ⌘V / Ctrl+V 贴进来。
+超上限的请求回 413，报错里写的是这台实例实际生效的那个数，首页拖拽区里那句「最大 X MB」也是同一个来源
+（`/api/health`），所以放开上限不用回去改前端。
+35MB 按真实原图给：手机直出的照片几 MB 到十几 MB，上面「工作视图」量过的那张 30MP 长截图（32MB PNG）刚好
+落在里面。再往上抬时留意 `server.go` 里的 `ReadTimeout`，它给的是五分钟读完整个请求。
 
 EXIF 里有两样东西会被读进来：拍摄时间写回每张切片（JPEG 走 APP1、PNG 走 eXIf 块、HEIC 走 Exif item，
 AVIF 与 JXL 由我们在编码后补进容器，见「输出各档的实测」），Orientation 决定方向。带旋转标记的上传，`/api/analyze` 报的是正立后的宽高，`/api/image` 仍按原始字节发送（浏览器自己会转），
