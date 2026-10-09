@@ -16,8 +16,11 @@ USER tuqie
 EXPOSE 7423
 
 ENTRYPOINT ["/usr/local/bin/tuqie"]
-# Flags override as arguments: `docker run ... tuqie -ttl 10m`
-CMD ["-addr", ":7423", "-data", "/data", "-ttl", "60m"]
+# Only the path that has no built-in default is spelled out here; -addr and -ttl
+# already default to :7423 and 60m, and naming them in the image would outrank the
+# TUQIE_ADDR / TUQIE_TTL a compose file sets, because a flag beats an environment
+# variable.
+CMD ["-data", "/data"]
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
     CMD wget -qO- http://127.0.0.1:7423/api/health >/dev/null || exit 1
