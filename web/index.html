@@ -15,8 +15,11 @@
     <link rel="icon" type="image/png" sizes="16x16" href="/icons/favicon-16.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
     <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
-    <!-- Dock 磁贴要的是 512 级别的源；只给 180 的话系统得把它放大，斜边的台阶会跟着
-         被放大。两个尺寸都声明，让系统有的选就下采样。 -->
+    <!-- 主屏磁贴。Apple 自己的写法是不带 sizes 的这一个：iOS 按它内置的那组候选尺寸挑，
+         声明了 sizes 就有挑不中的余地，所以先给一个不挑的。
+         根路径那份还兼着接住 iOS 不读 link、直接探测 /apple-touch-icon.png 的那条路。
+         512 留给 iPad 和 Dock，只给 180 的话系统得放大，斜边的台阶会跟着被放大。 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="/icons/apple-touch-icon-512.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
