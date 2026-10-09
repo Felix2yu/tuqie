@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -19,11 +20,12 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":7423", "listen address")
-	dataDir := flag.String("data", "", "directory for uploads (default: $TMPDIR/tuqie)")
-	ttl := flag.Duration("ttl", 60*time.Minute, "how long uploads are kept")
-	password := flag.String("password", "", "ask every request but the health check for this password (basic auth, any username); empty leaves the tool open")
-	uploads := flag.Int("uploads-per-minute", 30, "uploads one client may post per minute, 0 for no limit")
+	addr := flag.String("addr", envOr("addr", ":7423"), "listen address (TUQIE_ADDR)")
+	dataDir := flag.String("data", envOr("data", ""), "directory for uploads (TUQIE_DATA, default: $TMPDIR/tuqie)")
+	ttl := flag.String("ttl", envOr("ttl", "60m"), "how long uploads are kept (TUQIE_TTL)")
+	password := flag.String("password", envOr("password", ""), "ask every request but the health check for this password (TUQIE_PASSWORD; basic auth, any username); empty leaves the tool open")
+	uploads := flag.String("uploads-per-minute", envOr("uploads-per-minute", "30"), "uploads one client may post per minute (TUQIE_UPLOADS_PER_MINUTE), 0 for no limit")
+	maxUpload := flag.String("max-upload", envOr("max-upload", defaultMaxUpload), "ceiling on one upload (TUQIE_MAX_UPLOAD): bytes or a size like 50MB, 0 for no ceiling")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
 
@@ -32,8 +34,23 @@ func main() {
 		return
 	}
 
-	cfg := server.Config{Password: *password, UploadsPerMinute: *uploads}
-	if err := run(*addr, *dataDir, *ttl, cfg); err != nil {
+	// Read after Parse: a variable nobody overrode should not be able to stop the
+	// tool from starting.
+	keep, err := time.ParseDuration(*ttl)
+	if err != nil {
+		log.Fatalf("-ttl: %v", err)
+	}
+	perMinute, err := strconv.Atoi(*uploads)
+	if err != nil {
+		log.Fatalf("-uploads-per-minute: %v", err)
+	}
+	ceiling, err := parseSize(*maxUpload)
+	if err != nil {
+		log.Fatalf("-max-upload: %v", err)
+	}
+
+	cfg := server.Config{Password: *password, UploadsPerMinute: perMinute, MaxUpload: ceiling}
+	if err := run(*addr, *dataDir, keep, cfg); err != nil {
 		log.Fatal(err)
 	}
 }
