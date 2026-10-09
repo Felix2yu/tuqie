@@ -8,8 +8,15 @@ const SHELL = 'tuqie-shell-v1';
 const SHELL_URL = '/';
 
 // The shell is the whole app offline: the page, the manifest it links, and the
-// icons a home-screen launch draws before any of the rest is asked for.
-const SHELL_FILES = [SHELL_URL, '/manifest.json', '/icons/icon-192.png', '/icons/maskable-192.png'];
+// icons a home-screen launch draws before any of the rest is asked for — iOS
+// takes that from apple-touch-icon, Android from the manifest.
+const SHELL_FILES = [
+  SHELL_URL,
+  '/manifest.json',
+  '/apple-touch-icon.png',
+  '/icons/icon-192.png',
+  '/icons/maskable-192.png',
+];
 
 // The probe below must reach the network rather than the copy this worker keeps.
 const REVISION_QUERY = 'sw-revision';
