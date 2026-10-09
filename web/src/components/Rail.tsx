@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { type Cut } from '../lib/cuts';
+import { useTheme } from '../lib/theme';
 import type { Axis, Candidate, Signal } from '../types';
 
 type Props = {
@@ -17,8 +18,26 @@ type Props = {
 
 const HIT_PX = 12;
 
+/**
+ * The strip is painted into a canvas, where no class name reaches, so the colours
+ * are read back off the document: the palette stays the one place a theme is
+ * written down, and a redraw picks up whichever theme is showing.
+ */
+function palette() {
+  const s = getComputedStyle(document.documentElement);
+  const triple = (name: string) => s.getPropertyValue(name).trim();
+  return {
+    quiet: triple('--p-rail-quiet'),
+    signal: triple('--p-rail-signal'),
+    hidden: triple('--p-rail-hidden'),
+    cut: triple('--p-rail-cut'),
+    label: triple('--p-rail-label'),
+  };
+}
+
 /** Navigator strip: line-to-line activity for the whole screenshot at once. */
 export default function Rail({ axis, length, signal, cuts, candidates, viewport, onAdd, onMove, onCommit }: Props) {
+  const { theme } = useTheme();
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [drag, setDrag] = useState<string | null>(null);
@@ -45,6 +64,7 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
+      const col = palette();
 
       const lines = signal.lines || 1;
       const span = along ? w : h;
@@ -57,18 +77,18 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
       for (let i = 0; i < lines; i++) {
         const p = i * cell;
         const flat = signal.flat[i] ?? 0;
-        ctx.fillStyle = `rgba(226,232,240,${0.035 + flat * 0.075})`;
+        ctx.fillStyle = `rgba(${col.quiet},${0.035 + flat * 0.075})`;
         if (along) ctx.fillRect(p, 0, cell + 1, h);
         else ctx.fillRect(0, p, w, cell + 1);
         const diff = signal.diff[i] ?? 0;
         const len = Math.max(1, diff * (across - 8));
-        ctx.fillStyle = inView(i) ? 'rgba(45,212,191,0.9)' : 'rgba(45,212,191,0.45)';
+        ctx.fillStyle = `rgba(${col.signal},${inView(i) ? 0.9 : 0.45})`;
         if (along) ctx.fillRect(p, 4, Math.max(1, cell), len);
         else ctx.fillRect(4, p, len, Math.max(1, cell));
       }
 
       // Lines the threshold currently hides, so the user can see what they gave up.
-      ctx.fillStyle = 'rgba(148,163,184,0.55)';
+      ctx.fillStyle = `rgba(${col.hidden},0.55)`;
       const taken = new Set(cuts.map((c) => c.pos));
       for (const c of candidates) {
         if (taken.has(c.pos)) continue;
@@ -79,7 +99,7 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
 
       cuts.forEach((cut, i) => {
         const p = (cut.pos / length) * span;
-        ctx.fillStyle = '#5eead4';
+        ctx.fillStyle = `rgb(${col.cut})`;
         if (along) {
           ctx.fillRect(p - 1, 0, 2, h);
           ctx.beginPath();
@@ -98,7 +118,7 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
           ctx.fill();
         }
         ctx.font = '9px ui-sans-serif, system-ui';
-        ctx.fillStyle = '#0f172a';
+        ctx.fillStyle = `rgb(${col.label})`;
         ctx.fillText(String(i + 1), along ? p + 2 : 2, along ? 10 : p + 3);
       });
     };
@@ -107,7 +127,7 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
     const ro = new ResizeObserver(draw);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [along, length, signal, cuts, candidates, viewport]);
+  }, [along, length, signal, cuts, candidates, viewport, theme]);
 
   const posAt = (clientX: number, clientY: number) => {
     const el = box.current;
@@ -159,8 +179,8 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
       ref={box}
       className={
         along
-          ? 'grab relative h-14 w-full shrink-0 border-t border-ink-700 bg-ink-900'
-          : 'grab relative w-14 shrink-0 border-l border-ink-700 bg-ink-900 md:w-16'
+          ? 'grab relative h-14 w-full shrink-0 border-t border-line bg-surface'
+          : 'grab relative w-14 shrink-0 border-l border-line bg-surface md:w-16'
       }
       onPointerDown={(e) => {
         e.preventDefault();
@@ -190,8 +210,8 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
       <span
         className={
           along
-            ? 'pointer-events-none absolute inset-y-0 right-1 flex items-center text-[9px] tracking-wider text-ink-400'
-            : 'pointer-events-none absolute inset-x-0 bottom-0 text-center text-[9px] tracking-wider text-ink-400'
+            ? 'pointer-events-none absolute inset-y-0 right-1 flex items-center text-[9px] tracking-wider text-muted'
+            : 'pointer-events-none absolute inset-x-0 bottom-0 text-center text-[9px] tracking-wider text-muted'
         }
       >
         强度

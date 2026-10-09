@@ -200,7 +200,7 @@ export default function Stage({
                   } ${drag === cut.id ? 'bg-accent' : 'bg-accent/75'}`}
                 />
                 <div
-                  className={`absolute flex items-center gap-1 ${
+                  className={`scrim absolute flex items-center gap-1 ${
                     across ? 'left-1/2 top-1 -translate-x-1/2' : 'left-1 top-1/2 -translate-y-1/2'
                   }`}
                 >
@@ -218,7 +218,7 @@ export default function Stage({
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onFocus={(e) => e.target.select()}
-                      className="w-[64px] rounded bg-ink-900/95 px-1.5 py-0.5 text-[10px] tabular-nums text-accent outline outline-1 outline-accent"
+                      className="w-[64px] rounded bg-surface/95 px-1.5 py-0.5 text-[10px] tabular-nums text-accent outline outline-1 outline-accent"
                       aria-label={`第 ${i + 1} 条切割线的位置（像素）`}
                     />
                   ) : (
@@ -230,7 +230,7 @@ export default function Stage({
                         e.stopPropagation();
                         setEdit({ id: cut.id, text: String(cut.pos) });
                       }}
-                      className="rounded bg-ink-900/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent hover:bg-ink-900"
+                      className="rounded bg-surface/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent hover:bg-surface"
                     >
                       {i + 1} · {cut.pos}px
                     </button>
@@ -243,7 +243,7 @@ export default function Stage({
                       e.stopPropagation();
                       onRemove(cut.id);
                     }}
-                    className="grid h-6 w-6 place-content-center rounded bg-ink-900/90 text-xs text-rose-300 active:bg-rose-500/30"
+                    className="grid h-6 w-6 place-content-center rounded bg-surface/90 text-xs text-danger active:bg-danger-solid/30"
                   >
                     ✕
                   </button>
@@ -257,7 +257,7 @@ export default function Stage({
       <button
         type="button"
         onClick={addAtCentre}
-        className="absolute right-3 bottom-3 rounded-full border border-ink-600 bg-ink-900/95 px-4 py-2 text-sm font-medium text-accent shadow-lg backdrop-blur active:scale-95"
+        className="absolute right-3 bottom-3 rounded-full border border-edge bg-surface/95 px-4 py-2 text-sm font-medium text-accent shadow-lg backdrop-blur active:scale-95"
       >
         ＋ 在画面中央添加
       </button>

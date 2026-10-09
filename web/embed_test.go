@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+// The stylesheet is named after its own contents, so the page is where its current
+// name is written down.
+var cssAsset = regexp.MustCompile(`/assets/[^"']+\.css`)
 
 func TestDistServesTheBuiltFrontend(t *testing.T) {
 	dist, err := Dist()
@@ -123,5 +128,53 @@ func TestPwaShellShipsWithItsIcons(t *testing.T) {
 
 	if _, err := fs.ReadFile(dist, "sw.js"); err != nil {
 		t.Fatalf("sw.js: %v", err)
+	}
+}
+
+// TestThemeTravelsWithTheShell pins the two halves of the theme mechanism that a
+// browser only reveals: which theme shows on the very first paint, and whether
+// switching it later changes anything at all.
+func TestThemeTravelsWithTheShell(t *testing.T) {
+	dist, err := Dist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := fs.ReadFile(dist, "index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(page)
+
+	// The bundle that owns the theme is deferred until after the first paint, so
+	// the choice has to be read and applied in the page itself — otherwise a
+	// light-theme visitor is shown a dark page and then watches it flip.
+	booted := strings.Index(html, "tuqie-theme")
+	bundle := strings.Index(html, `type="module"`)
+	if booted < 0 {
+		t.Fatal("index.html decides no theme of its own, so the theme arrives a repaint late")
+	}
+	if bundle < 0 {
+		t.Fatal("index.html loads no bundle")
+	}
+	if booted > bundle {
+		t.Fatalf("the theme bootstrap sits after the bundle (%d > %d)", booted, bundle)
+	}
+
+	name := cssAsset.FindString(html)
+	if name == "" {
+		t.Fatal("index.html names no stylesheet")
+	}
+	css, err := fs.ReadFile(dist, strings.TrimPrefix(name, "/"))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	sheet := string(css)
+	// A utility that baked its colour in stays that colour whatever the theme says.
+	if !strings.Contains(sheet, "var(--p-surface)") {
+		t.Fatal("no utility reads the palette at runtime, so switching the theme changes nothing")
+	}
+	// The second palette has to hang off the very attribute the page sets.
+	if !strings.Contains(sheet, "[data-theme=light]") && !strings.Contains(sheet, `[data-theme="light"]`) {
+		t.Fatal("the built CSS carries no light override keyed on data-theme")
 	}
 }

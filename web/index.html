@@ -24,6 +24,23 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="图切" />
     <title>图切 · 长截图拆分工具</title>
+    <script>
+      // data-theme is what every colour on the page hangs off, and the bundle that
+      // owns it arrives after the first paint. Setting it here is the difference
+      // between a light-theme visitor seeing their own page and seeing a dark one
+      // flip to light a moment later.
+      (function () {
+        var choice = 'auto';
+        try {
+          choice = localStorage.getItem('tuqie-theme') || 'auto';
+        } catch (e) {
+          /* no storage: follow the system */
+        }
+        if (choice !== 'light' && choice !== 'dark') choice = 'auto';
+        var isDark = choice === 'dark' || (choice === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

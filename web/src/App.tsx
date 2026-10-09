@@ -6,6 +6,7 @@ import Lightbox from './components/Lightbox';
 import PiecesGrid from './components/PiecesGrid';
 import Rail from './components/Rail';
 import Stage from './components/Stage';
+import ThemeToggle from './components/ThemeToggle';
 import {
   MIN_PIECE_PX,
   applyMove,
@@ -312,16 +313,17 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="safe-top flex items-center gap-3 border-b border-ink-700 bg-ink-900 px-3 py-2">
-        <span className="text-sm font-semibold text-white">图切</span>
-        <span className="min-w-0 flex-1 truncate text-xs text-ink-400">
+      <header className="safe-top flex items-center gap-3 border-b border-line bg-surface px-3 py-2">
+        <span className="text-sm font-semibold text-ink">图切</span>
+        <span className="min-w-0 flex-1 truncate text-xs text-muted">
           {analysis.filename} · {analysis.width}×{analysis.height} · {exported.length} 张
           {exported.length < bands.length ? `（跳过 ${bands.length - exported.length}）` : ''}
         </span>
+        <ThemeToggle />
         <button
           type="button"
           onClick={reset}
-          className="rounded-lg border border-ink-600 bg-ink-800 px-3 py-1.5 text-xs text-slate-200 active:scale-95"
+          className="rounded-lg border border-edge bg-sunken px-3 py-1.5 text-xs text-ink active:scale-95"
         >
           换一张
         </button>
@@ -357,7 +359,7 @@ export default function App() {
           />
         </div>
 
-        <aside className="thin-scroll safe-bottom flex max-h-[48vh] shrink-0 flex-col gap-4 overflow-y-auto border-t border-ink-700 bg-ink-900 p-3 md:max-h-none md:w-[360px] md:border-l md:border-t-0">
+        <aside className="thin-scroll safe-bottom flex max-h-[48vh] shrink-0 flex-col gap-4 overflow-y-auto border-t border-line bg-surface p-3 md:max-h-none md:w-[360px] md:border-l md:border-t-0">
           <Controls
             analysis={analysis}
             axis={analysis.axis}
@@ -395,7 +397,7 @@ export default function App() {
             onDownloadZip={() => void onDownloadZip()}
           />
           <div>
-            <div className="mb-2 text-xs text-ink-400">切片预览</div>
+            <div className="mb-2 text-xs text-muted">切片预览</div>
             <PiecesGrid
               src={analysis.url}
               axis={analysis.axis}
@@ -429,7 +431,7 @@ export default function App() {
             />
           )}
           {isIOS() && !shareAvailable && (
-            <p className="text-xs text-amber-300">
+            <p className="text-xs text-warn">
               此浏览器不支持把图片直接写入相册，请用 Safari 打开后重试。
             </p>
           )}

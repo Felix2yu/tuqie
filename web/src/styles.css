@@ -4,15 +4,88 @@
    an SVG's transform="" attribute was being extracted as a .transform utility. */
 @source not "../public/**";
 
+/* One palette per theme, and nothing else writes a colour down: utilities name a
+   role (surface, edge, muted), a role reads a palette variable, and switching the
+   theme only swaps the variables. That is why no component carries a dark:
+   variant — a component that names its roles is correct in both. */
+:root {
+  --p-canvas: #080b10;
+  --p-surface: #0d1219;
+  --p-sunken: #141b24;
+  --p-line: #1d2632;
+  --p-edge: #2a3646;
+  --p-edge-hi: #6b7b8f;
+  --p-ink: #f2f5f9;
+  --p-muted: #6b7b8f;
+  --p-accent: #2dd4bf;
+  --p-accent-dim: #115e52;
+  --p-on-accent: #0d1219;
+  --p-warn: #fcd34d;
+  --p-danger: #fb7185;
+  --p-danger-solid: #f43f5e;
+  /* A label on a saturated fill is not a colour the theme gets to move: white on
+     red is the readable pairing in either palette. */
+  --p-on-danger: #ffffff;
+
+  /* The rail is drawn into a canvas, so no class reaches it: draw() reads these
+     as "r,g,b" triples and supplies the alpha itself. */
+  --p-rail-quiet: 226, 232, 240;
+  --p-rail-signal: 45, 212, 191;
+  --p-rail-hidden: 148, 163, 184;
+  --p-rail-cut: 94, 234, 212;
+  --p-rail-label: 226, 232, 240;
+
+  color-scheme: dark;
+}
+
+/* Light is not the dark palette turned upside down: the scale runs the other
+   way, so every surface role gets a near-white value and every text role a dark
+   one, with the accent darkened to hold its contrast against white. */
+html[data-theme='light'] {
+  --p-canvas: #eef1f5;
+  --p-surface: #ffffff;
+  --p-sunken: #f1f4f8;
+  --p-line: #dde3ea;
+  --p-edge: #c3ccd7;
+  --p-edge-hi: #7d8b9c;
+  --p-ink: #0f1720;
+  --p-muted: #5a6675;
+  --p-accent: #0f766e;
+  --p-accent-dim: #0d9488;
+  --p-on-accent: #ffffff;
+  --p-warn: #a16207;
+  --p-danger: #be123c;
+  --p-danger-solid: #e11d48;
+  --p-on-danger: #ffffff;
+
+  --p-rail-quiet: 15, 23, 42;
+  --p-rail-signal: 13, 148, 136;
+  --p-rail-hidden: 100, 116, 139;
+  --p-rail-cut: 15, 118, 110;
+  --p-rail-label: 248, 250, 252;
+
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-canvas: var(--p-canvas);
+  --color-surface: var(--p-surface);
+  --color-sunken: var(--p-sunken);
+  --color-line: var(--p-line);
+  --color-edge: var(--p-edge);
+  --color-edge-hi: var(--p-edge-hi);
+  --color-ink: var(--p-ink);
+  --color-muted: var(--p-muted);
+  --color-accent: var(--p-accent);
+  --color-accent-dim: var(--p-accent-dim);
+  --color-on-accent: var(--p-on-accent);
+  --color-warn: var(--p-warn);
+  --color-danger: var(--p-danger);
+  --color-danger-solid: var(--p-danger-solid);
+  --color-on-danger: var(--p-on-danger);
+}
+
 @theme {
-  --color-ink-950: #080b10;
-  --color-ink-900: #0d1219;
-  --color-ink-800: #141b24;
-  --color-ink-700: #1d2632;
-  --color-ink-600: #2a3646;
-  --color-ink-400: #6b7b8f;
-  --color-accent: #2dd4bf;
-  --color-accent-dim: #115e52;
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
@@ -24,8 +97,8 @@ body,
 
 body {
   margin: 0;
-  background: var(--color-ink-950);
-  color: #e2e8f0;
+  background: var(--p-canvas);
+  color: var(--p-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
@@ -52,12 +125,39 @@ body {
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
 }
 
+.safe-right {
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+}
+
+/* An image mat stays dark in either theme. The picture being checked is usually
+   a screenshot, which means mostly white, and a light mat would swallow its
+   edges — so this re-asserts the dark palette on the subtree. Custom properties
+   inherit, and the utilities below read them off the element they land on, which
+   is the whole reason the components never needed a dark: variant. */
+.scrim {
+  --p-canvas: #080b10;
+  --p-surface: #0d1219;
+  --p-sunken: #141b24;
+  --p-line: #1d2632;
+  --p-edge: #2a3646;
+  --p-edge-hi: #6b7b8f;
+  --p-ink: #f2f5f9;
+  --p-muted: #6b7b8f;
+  --p-accent: #2dd4bf;
+  --p-accent-dim: #115e52;
+  --p-on-accent: #0d1219;
+  --p-warn: #fcd34d;
+  --p-danger: #fb7185;
+  --p-danger-solid: #f43f5e;
+  --p-on-danger: #ffffff;
+}
+
 .thin-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 .thin-scroll::-webkit-scrollbar-thumb {
-  background: var(--color-ink-600);
+  background: var(--p-edge);
   border-radius: 8px;
 }
 
@@ -66,14 +166,14 @@ input[type='range'] {
   appearance: none;
   height: 4px;
   border-radius: 999px;
-  background: var(--color-ink-600);
+  background: var(--p-edge);
 }
 input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   height: 22px;
   width: 22px;
   border-radius: 999px;
-  background: var(--color-accent);
-  border: 3px solid var(--color-ink-900);
+  background: var(--p-accent);
+  border: 3px solid var(--p-surface);
   cursor: pointer;
 }
