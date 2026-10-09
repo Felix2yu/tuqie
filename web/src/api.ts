@@ -26,6 +26,23 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   }
 }
 
+/**
+ * The ceiling on one upload is the operator's to set, so the page asks the health
+ * check — the one route a password leaves open — instead of naming a number the
+ * bundle remembers. Null means no answer, which is what an installed copy running
+ * offline looks like, and the honest response to that is to say nothing about size.
+ */
+export async function fetchMaxUpload(): Promise<number | null> {
+  try {
+    const res = await fetch('/api/health');
+    if (!res.ok) return null;
+    const body = (await res.json()) as { maxUpload?: unknown };
+    return typeof body.maxUpload === 'number' ? body.maxUpload : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function analyze(file: File): Promise<Analysis> {
   const form = new FormData();
   form.append('file', file);

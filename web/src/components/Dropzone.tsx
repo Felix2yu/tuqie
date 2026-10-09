@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { humanBytes } from '../lib/size';
 import ThemeToggle from './ThemeToggle';
 
 type Props = {
@@ -7,6 +8,9 @@ type Props = {
   // The shell opens without a network; a picture only becomes pieces on the
   // server, so this is the one thing the page can say for itself.
   offline: boolean;
+  // Bytes one upload may carry on this instance, or null while the server has not
+  // answered. Zero is the ceiling switched off.
+  maxUpload: number | null;
   onFile: (file: File) => void;
 };
 
@@ -32,7 +36,7 @@ function namePasted(file: File): File | null {
   return new File([file], `${PASTED}-${stamp}.${ext}`, { type: file.type });
 }
 
-export default function Dropzone({ busy, error, offline, onFile }: Props) {
+export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
   const send = useRef(onFile);
@@ -68,6 +72,10 @@ export default function Dropzone({ busy, error, offline, onFile }: Props) {
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
   }, [busy]);
+
+  // No answer from the server leaves the size out of the sentence rather than in it
+  // with a number this instance may not use.
+  const sizeNote = maxUpload === null ? null : maxUpload === 0 ? '不限大小' : `最大 ${humanBytes(maxUpload)}`;
 
   return (
     <div className="relative flex min-h-full flex-col">
@@ -113,7 +121,9 @@ export default function Dropzone({ busy, error, offline, onFile }: Props) {
                 {busy ? '正在识别分割线…' : '拖入或点击选择长截图'}
               </div>
               <div className="mt-1 text-xs text-muted">
-                支持 PNG / JPEG / GIF / HEIC / AVIF / JXL，最大 250 MB，也可以直接 ⌘V / Ctrl+V 粘贴
+                {'支持 PNG / JPEG / GIF / HEIC / AVIF / JXL'}
+                {sizeNote ? `，${sizeNote}` : ''}
+                {'，也可以直接 ⌘V / Ctrl+V 粘贴'}
               </div>
             </button>
 

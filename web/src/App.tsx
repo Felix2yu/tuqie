@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { analyze as analyzeFile, sliceUrl, zipCount } from './api';
+import { analyze as analyzeFile, fetchMaxUpload, sliceUrl, zipCount } from './api';
 import Controls from './components/Controls';
 import Dropzone from './components/Dropzone';
 import Lightbox from './components/Lightbox';
@@ -65,6 +65,20 @@ export default function App() {
       window.removeEventListener('offline', watch);
     };
   }, []);
+
+  // How big an upload this particular instance takes. Asked, not assumed, so the
+  // drop zone can say the number that is actually in force; asked again when the
+  // network comes back, since the first try may have been the offline one.
+  const [maxUpload, setMaxUpload] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    void fetchMaxUpload().then((n) => {
+      if (live) setMaxUpload(n);
+    });
+    return () => {
+      live = false;
+    };
+  }, [online]);
 
   const [threshold, setThreshold] = useState(DEFAULT_THRESHOLD);
   const [removed, setRemoved] = useState<string[]>([]);
@@ -308,7 +322,15 @@ export default function App() {
   };
 
   if (!analysis) {
-    return <Dropzone busy={uploading} error={uploadError} offline={!online} onFile={(f) => void handleFile(f)} />;
+    return (
+      <Dropzone
+        busy={uploading}
+        error={uploadError}
+        offline={!online}
+        maxUpload={maxUpload}
+        onFile={(f) => void handleFile(f)}
+      />
+    );
   }
 
   return (
