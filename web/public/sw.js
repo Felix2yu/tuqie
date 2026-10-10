@@ -15,7 +15,7 @@ const SHELL_FILES = [
   '/manifest.json',
   '/apple-touch-icon.png',
   '/icons/icon-192.png',
-  '/icons/maskable-192.png',
+  '/icons/icon-maskable-192.png',
 ];
 
 // The probe below must reach the network rather than the copy this worker keeps.
