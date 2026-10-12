@@ -3,7 +3,7 @@
 # 装配式镜像：二进制由 CI（reusable-image）预编译进 bin/tuqie 后 COPY。
 # 前端已经通过 go:embed 内嵌进二进制，镜像内不再需要 Node 或 Go 阶段。
 # 本地 `docker build` 前先跑 ./build.sh 产出 bin/tuqie。
-FROM alpine:3.22
+FROM alpine:3.24
 
 RUN addgroup --system tuqie \
     && adduser --system --ingroup tuqie tuqie \
