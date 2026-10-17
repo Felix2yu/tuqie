@@ -7,7 +7,7 @@ import {
   splitFloor,
   stemOf,
   type Naming,
-  type SplitMode,
+  type SplitMode
 } from '../lib/cuts';
 import type { Analysis, Axis, Format, Settings } from '../types';
 
@@ -43,7 +43,7 @@ type Props = {
 const TONE = {
   ok: 'text-accent',
   warn: 'text-warn',
-  err: 'text-danger',
+  err: 'text-danger'
 } as const;
 
 export default function Controls(p: Props) {
@@ -61,12 +61,24 @@ export default function Controls(p: Props) {
   // single zip beats N downloads, which no browser starts without asking first.
   const [primary, secondary] = p.shareAvailable
     ? [
-        { text: `存入相册 · ${p.pieceCount} 张`, title: '导出时在分享面板里选「存储图像」', run: p.onSaveToPhotos },
-        { text: 'ZIP', title: '打包成一个 zip 下载', run: p.onDownloadZip },
+        {
+          text: `存入相册 · ${p.pieceCount} 张`,
+          title: '导出时在分享面板里选「存储图像」',
+          run: p.onSaveToPhotos
+        },
+        { text: 'ZIP', title: '打包成一个 zip 下载', run: p.onDownloadZip }
       ]
     : [
-        { text: `下载 ZIP · ${p.pieceCount} 张`, title: '打包成一个 zip 下载', run: p.onDownloadZip },
-        { text: '逐张', title: '一张一个文件地下载，浏览器可能会先问你是否允许', run: p.onSaveToPhotos },
+        {
+          text: `下载 ZIP · ${p.pieceCount} 张`,
+          title: '打包成一个 zip 下载',
+          run: p.onDownloadZip
+        },
+        {
+          text: '逐张',
+          title: '一张一个文件地下载，浏览器可能会先问你是否允许',
+          run: p.onSaveToPhotos
+        }
       ];
 
   // A chat screenshot with no seams still wants splitting, so the regular grid is
@@ -94,7 +106,7 @@ export default function Controls(p: Props) {
           className="min-w-0 flex-1"
           aria-label="识别阈值"
         />
-        <span className="w-16 shrink-0 text-right text-xs tabular-nums text-muted">
+        <span className="w-16 shrink-0 text-right text-xs text-muted tabular-nums">
           {p.keptCount}/{p.candidateCount} 条
         </span>
       </div>
@@ -149,7 +161,7 @@ export default function Controls(p: Props) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && canSplit) p.onApplySplit();
           }}
-          className="w-16 shrink-0 rounded-lg border border-edge bg-sunken px-2 py-1.5 text-xs tabular-nums text-ink outline-none focus:border-accent"
+          className="w-16 shrink-0 rounded-lg border border-edge bg-sunken px-2 py-1.5 text-xs text-ink tabular-nums outline-none focus:border-accent"
           aria-label={p.splitMode === 'count' ? '等分份数' : '每段长度（像素）'}
         />
         <span className="shrink-0 text-xs text-muted">{p.splitMode === 'count' ? '份' : 'px'}</span>
@@ -162,7 +174,7 @@ export default function Controls(p: Props) {
               ? '按这个数值重排切割线，会替换当前的识别结果'
               : `至少 ${floor}${p.splitMode === 'count' ? ' 份' : 'px'}，且这张图要分得出至少两张`
           }
-          className="min-w-0 flex-1 rounded-lg border border-edge bg-sunken px-2 py-2 text-xs text-ink disabled:opacity-40 active:scale-[0.98]"
+          className="min-w-0 flex-1 rounded-lg border border-edge bg-sunken px-2 py-2 text-xs text-ink active:scale-[0.98] disabled:opacity-40"
         >
           {canSplit ? `应用 · ${grid.length + 1} 张` : '数值无效'}
         </button>
@@ -189,13 +201,15 @@ export default function Controls(p: Props) {
           value={p.naming.start}
           // A fractional start would be rejected by the export endpoint, so the
           // field rounds down as it is typed.
-          onChange={(e) => p.onNaming({ ...p.naming, start: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-          className="w-14 shrink-0 rounded-lg border border-edge bg-sunken px-2 py-1.5 text-xs tabular-nums text-ink outline-none focus:border-accent"
+          onChange={(e) =>
+            p.onNaming({ ...p.naming, start: Math.max(0, Math.floor(Number(e.target.value) || 0)) })
+          }
+          className="w-14 shrink-0 rounded-lg border border-edge bg-sunken px-2 py-1.5 text-xs text-ink tabular-nums outline-none focus:border-accent"
           aria-label="起始编号"
         />
         <span className="shrink-0 text-xs text-muted">号起</span>
       </div>
-      <p className="-mt-1 truncate text-[10px] tabular-nums text-muted">
+      <p className="-mt-1 truncate text-[10px] text-muted tabular-nums">
         {p.pieceCount > 0
           ? `导出 ${pieceName(p.naming, 0, ext, pad)}${p.pieceCount > 1 ? ` … ${pieceName(p.naming, p.pieceCount - 1, ext, pad)}` : ''}`
           : '所有切片都被排除了'}
@@ -228,12 +242,14 @@ export default function Controls(p: Props) {
               className="min-w-[10rem] flex-1"
               aria-label="画质"
             />
-            <span className="w-8 shrink-0 text-right text-xs tabular-nums text-muted">{p.settings.quality}</span>
+            <span className="w-8 shrink-0 text-right text-xs text-muted tabular-nums">
+              {p.settings.quality}
+            </span>
           </>
         ) : (
           <span className="flex-1 text-right text-xs text-muted">PNG 无损</span>
         )}
-        {formatNote && <span className="w-full -mt-1 text-[10px] text-muted">{formatNote}</span>}
+        {formatNote && <span className="-mt-1 w-full text-[10px] text-muted">{formatNote}</span>}
       </div>
 
       <div className="flex items-center gap-2">
@@ -242,7 +258,7 @@ export default function Controls(p: Props) {
           disabled={p.busy !== null || p.pieceCount < 1}
           onClick={primary.run}
           title={primary.title}
-          className="flex-1 rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent disabled:opacity-40 active:scale-[0.98]"
+          className="flex-1 rounded-lg bg-accent px-3 py-2.5 text-sm font-semibold text-on-accent active:scale-[0.98] disabled:opacity-40"
         >
           {primary.text}
         </button>
@@ -251,7 +267,7 @@ export default function Controls(p: Props) {
           disabled={p.busy !== null || p.pieceCount < 1}
           onClick={secondary.run}
           title={secondary.title}
-          className="rounded-lg border border-edge bg-sunken px-3 py-2.5 text-sm text-ink disabled:opacity-40 active:scale-[0.98]"
+          className="rounded-lg border border-edge bg-sunken px-3 py-2.5 text-sm text-ink active:scale-[0.98] disabled:opacity-40"
         >
           {secondary.text}
         </button>

@@ -61,7 +61,7 @@ export function sliceUrl(
   to: number,
   index: number,
   format: Format,
-  quality: number,
+  quality: number
 ): string {
   const params = new URLSearchParams({
     id,
@@ -70,7 +70,7 @@ export function sliceUrl(
     to: String(to),
     index: String(index),
     format,
-    quality: String(quality),
+    quality: String(quality)
   });
   return `/api/slice?${params.toString()}`;
 }
@@ -82,7 +82,7 @@ export async function fetchSlice(
   to: number,
   index: number,
   format: Format,
-  quality: number,
+  quality: number
 ): Promise<Blob> {
   const res = await send(sliceUrl(id, axis, from, to, index, format, quality));
   if (!res.ok) throw new Error(await errorMessage(res));
@@ -113,7 +113,7 @@ export async function fetchZip(
   skip: number[],
   naming: Naming,
   format: Format,
-  quality: number,
+  quality: number
 ): Promise<Blob> {
   const res = await send('/api/export', {
     method: 'POST',
@@ -126,8 +126,8 @@ export async function fetchZip(
       prefix: sanitizePrefix(naming.prefix),
       start: naming.start,
       format,
-      quality,
-    }),
+      quality
+    })
   });
   if (!res.ok) throw new Error(await errorMessage(res));
   return res.blob();

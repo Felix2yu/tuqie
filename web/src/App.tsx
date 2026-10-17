@@ -25,7 +25,7 @@ import {
   type Band,
   type Cut,
   type Naming,
-  type SplitMode,
+  type SplitMode
 } from './lib/cuts';
 import {
   canShareFiles,
@@ -33,7 +33,7 @@ import {
   isIOS,
   renderPieces,
   sharePieces,
-  zipPieces,
+  zipPieces
 } from './lib/export';
 import type { Analysis, Settings } from './types';
 
@@ -111,14 +111,22 @@ export default function App() {
 
   const baseCuts = useMemo(
     () => (analysis ? resolveCuts(analysis.candidates, threshold, removed, manual, length) : []),
-    [analysis, threshold, removed, manual, length],
+    [analysis, threshold, removed, manual, length]
   );
   const cuts = useMemo(() => {
     if (!drag) return baseCuts;
     const i = baseCuts.findIndex((c) => c.id === drag.id);
     if (i < 0) return baseCuts;
     const next = [...baseCuts];
-    next[i] = { ...next[i], pos: clampCut(drag.pos, baseCuts.map((c) => c.pos), i, length) };
+    next[i] = {
+      ...next[i],
+      pos: clampCut(
+        drag.pos,
+        baseCuts.map((c) => c.pos),
+        i,
+        length
+      )
+    };
     return next;
   }, [drag, baseCuts, length]);
   const bands = useMemo(() => bandsFromCuts(cuts, length), [cuts, length]);
@@ -133,14 +141,14 @@ export default function App() {
   const ordinalOf = useCallback((band: Band) => ordinals.get(band.id) ?? 0, [ordinals]);
   const zoomBand = useMemo(
     () => (zoomId === null ? null : (bands.find((b) => b.id === zoomId) ?? null)),
-    [zoomId, bands],
+    [zoomId, bands]
   );
   const keptCount = useMemo(
     () =>
       analysis && threshold < 1
         ? analysis.candidates.filter((c) => c.score >= threshold).length
         : 0,
-    [analysis, threshold],
+    [analysis, threshold]
   );
 
   const onViewport = useCallback((window: [number, number]) => {
@@ -232,7 +240,7 @@ export default function App() {
       text:
         splitMode === 'count'
           ? `已按 ${splitValue} 等分重排 · ${next.length + 1} 张`
-          : `已按每段 ${splitValue}px 重排 · ${next.length + 1} 张`,
+          : `已按每段 ${splitValue}px 重排 · ${next.length + 1} 张`
     });
   };
 
@@ -250,11 +258,12 @@ export default function App() {
         naming,
         settings.format,
         settings.quality,
-        (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`),
+        (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`)
       );
       setBusy('请在分享面板中选择「存储图像」…');
       const outcome = await sharePieces(pieces, analysis.taken);
-      if (outcome === 'shared') setStatus({ tone: 'ok', text: `已交给系统，${total} 张已存入相册` });
+      if (outcome === 'shared')
+        setStatus({ tone: 'ok', text: `已交给系统，${total} 张已存入相册` });
       else if (outcome === 'cancelled') setStatus({ tone: 'warn', text: '已取消分享' });
       else setStatus({ tone: 'err', text: '分享失败，请改用 ZIP 下载' });
       return;
@@ -266,7 +275,7 @@ export default function App() {
       naming,
       settings.format,
       settings.quality,
-      (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`),
+      (done, t) => setBusy(`正在生成第 ${done}/${t} 张…`)
     );
     pieces.forEach((piece) => downloadBlob(piece.blob, piece.name));
     setStatus({ tone: 'ok', text: `已下载 ${total} 张到本地` });
@@ -300,19 +309,25 @@ export default function App() {
         bands.reduce<number[]>((acc, b, i) => (skipSet.has(b.id) ? [...acc, i] : acc), []),
         naming,
         settings.format,
-        settings.quality,
+        settings.quality
       );
       const prefix = sanitizePrefix(naming.prefix) || stemOf(analysis.filename);
       downloadBlob(blob, `${prefix}-slices.zip`);
       const asked = exported.length;
       const got = await zipCount(blob);
       if (got === null) {
-        setStatus({ tone: 'warn', text: `ZIP 已下载，但读不到它的目录，可能不完整（应有 ${asked} 张）` });
+        setStatus({
+          tone: 'warn',
+          text: `ZIP 已下载，但读不到它的目录，可能不完整（应有 ${asked} 张）`
+        });
       } else if (got < asked) {
         setStatus({ tone: 'warn', text: `ZIP 里是 ${got} 张，另有 ${asked - got} 张没能生成` });
       } else {
         const left = bands.length - asked;
-        setStatus({ tone: 'ok', text: `ZIP 已下载，共 ${got} 张${left ? `（跳过 ${left} 张）` : ''}` });
+        setStatus({
+          tone: 'ok',
+          text: `ZIP 已下载，共 ${got} 张${left ? `（跳过 ${left} 张）` : ''}`
+        });
       }
     } catch (err) {
       setStatus({ tone: 'err', text: (err as Error).message });
@@ -381,7 +396,7 @@ export default function App() {
           />
         </div>
 
-        <aside className="thin-scroll safe-bottom flex max-h-[48vh] shrink-0 flex-col gap-4 overflow-y-auto border-t border-line bg-surface p-3 md:max-h-none md:w-[360px] md:border-l md:border-t-0">
+        <aside className="thin-scroll safe-bottom flex max-h-[48vh] shrink-0 flex-col gap-4 overflow-y-auto border-t border-line bg-surface p-3 md:max-h-none md:w-[360px] md:border-t-0 md:border-l">
           <Controls
             analysis={analysis}
             axis={analysis.axis}
@@ -440,13 +455,13 @@ export default function App() {
                 zoomBand.to,
                 zoomBand.index,
                 settings.format,
-                settings.quality,
+                settings.quality
               )}
               name={pieceName(
                 naming,
                 ordinalOf(zoomBand),
                 extFor(settings.format),
-                namePad(naming.start, exported.length),
+                namePad(naming.start, exported.length)
               )}
               label={`${ordinalOf(zoomBand) + 1} · ${bandLabel(analysis.axis, analysis.width, analysis.height, zoomBand)}`}
               onClose={() => setZoomId(null)}

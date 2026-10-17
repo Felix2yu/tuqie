@@ -31,12 +31,22 @@ function palette() {
     signal: triple('--p-rail-signal'),
     hidden: triple('--p-rail-hidden'),
     cut: triple('--p-rail-cut'),
-    label: triple('--p-rail-label'),
+    label: triple('--p-rail-label')
   };
 }
 
 /** Navigator strip: line-to-line activity for the whole screenshot at once. */
-export default function Rail({ axis, length, signal, cuts, candidates, viewport, onAdd, onMove, onCommit }: Props) {
+export default function Rail({
+  axis,
+  length,
+  signal,
+  cuts,
+  candidates,
+  viewport,
+  onAdd,
+  onMove,
+  onCommit
+}: Props) {
   const { theme } = useTheme();
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -135,7 +145,10 @@ export default function Rail({ axis, length, signal, cuts, candidates, viewport,
     const rect = el.getBoundingClientRect();
     const span = along ? rect.width : rect.height;
     if (span <= 0) return 0;
-    const ratio = Math.min(Math.max((along ? clientX - rect.left : clientY - rect.top) / span, 0), 1);
+    const ratio = Math.min(
+      Math.max((along ? clientX - rect.left : clientY - rect.top) / span, 0),
+      1
+    );
     return Math.round(ratio * length);
   };
 

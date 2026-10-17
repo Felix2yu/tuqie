@@ -8,11 +8,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "display_override": [
-    "standalone",
-    "minimal-ui",
-    "browser"
-  ],
+  "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "any",
   "background_color": "#080b10",
   "theme_color": "#080b10",
@@ -58,8 +54,5 @@
       "label": "识别出的分割线、强度条与导出选项"
     }
   ],
-  "categories": [
-    "photo",
-    "utilities"
-  ]
+  "categories": ["photo", "utilities"]
 }

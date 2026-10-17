@@ -41,7 +41,9 @@ export function paint(choice: ThemeChoice): Theme {
   document.documentElement.dataset.theme = theme;
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) {
-    const surface = getComputedStyle(document.documentElement).getPropertyValue('--p-surface').trim();
+    const surface = getComputedStyle(document.documentElement)
+      .getPropertyValue('--p-surface')
+      .trim();
     if (surface) meta.setAttribute('content', surface);
   }
   return theme;

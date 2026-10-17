@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
+import { useLatest } from '../lib/useLatest';
+
 type Props = {
   /** The slice itself, not a crop of the upload: what this shows is what gets saved. */
   src: string;
@@ -18,8 +20,7 @@ export default function Lightbox({ src, name, label, onClose }: Props) {
   const box = useRef<HTMLDivElement>(null);
   // Held in a ref so the open/close effect runs once per mount even though the
   // parent passes a fresh closure on every render.
-  const close = useRef(onClose);
-  close.current = onClose;
+  const close = useLatest(onClose);
 
   useEffect(() => setUndecodable(false), [src]);
 
@@ -37,7 +38,9 @@ export default function Lightbox({ src, name, label, onClose }: Props) {
       document.body.style.overflow = scrollLock;
       opener?.focus();
     };
-  }, []);
+    // close 为稳定对象，列入依赖只为满足 exhaustive-deps，
+    // 「每次挂载只跑一次」的语义不变。
+  }, [close]);
 
   return (
     <div
@@ -76,7 +79,8 @@ export default function Lightbox({ src, name, label, onClose }: Props) {
       <div onClick={onClose} className="min-h-0 flex-1 overflow-auto">
         {undecodable ? (
           <p className="m-auto max-w-sm px-4 pt-24 text-center text-sm text-muted">
-            浏览器画不出 {name.slice(name.lastIndexOf('.') + 1).toUpperCase()}，用「另存」拿到这一张。
+            浏览器画不出 {name.slice(name.lastIndexOf('.') + 1).toUpperCase()}
+            ，用「另存」拿到这一张。
           </p>
         ) : (
           <img

@@ -24,7 +24,7 @@ export default function PiecesGrid({
   skipped,
   thumbSize = 92,
   onToggleSkip,
-  onPick,
+  onPick
 }: Props) {
   const vertical = axis !== 'x';
   // Rows are cut across the full width, so a strip's thumbnail is as wide as the
@@ -58,7 +58,7 @@ export default function PiecesGrid({
                   height: vertical ? box : thumbSize,
                   backgroundImage: `url(${src})`,
                   backgroundSize: `${imageWidth * scale}px ${imageHeight * scale}px`,
-                  backgroundPosition: vertical ? `0 -${b.from * scale}px` : `-${b.from * scale}px 0`,
+                  backgroundPosition: vertical ? `0 -${b.from * scale}px` : `-${b.from * scale}px 0`
                 }}
               />
               <button
@@ -66,8 +66,10 @@ export default function PiecesGrid({
                 aria-pressed={out}
                 title={out ? '这张重新计入导出' : '导出时跳过这一张'}
                 onClick={() => onToggleSkip(b.id)}
-                className={`scrim absolute right-1 top-1 grid h-5 w-5 place-content-center rounded text-[11px] ${
-                  out ? 'bg-danger-solid/80 text-on-danger' : 'bg-surface/85 text-muted hover:text-ink'
+                className={`scrim absolute top-1 right-1 grid h-5 w-5 place-content-center rounded text-[11px] ${
+                  out
+                    ? 'bg-danger-solid/80 text-on-danger'
+                    : 'bg-surface/85 text-muted hover:text-ink'
                 }`}
               >
                 {out ? '↺' : '−'}

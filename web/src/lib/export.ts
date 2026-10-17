@@ -21,7 +21,9 @@ export function isIOS(): boolean {
 export function canShareFiles(): boolean {
   if (typeof navigator === 'undefined' || !navigator.canShare) return false;
   try {
-    const probe = new File([new Blob([''], { type: 'image/png' })], 'probe.png', { type: 'image/png' });
+    const probe = new File([new Blob([''], { type: 'image/png' })], 'probe.png', {
+      type: 'image/png'
+    });
     return navigator.canShare({ files: [probe] });
   } catch {
     return false;
@@ -39,7 +41,7 @@ export async function renderPieces(
   naming: Naming,
   format: Format,
   quality: number,
-  onProgress?: Progress,
+  onProgress?: Progress
 ): Promise<Piece[]> {
   const ext = extFor(format);
   const type = mimeFor(format);
@@ -58,8 +60,9 @@ export type ShareOutcome = 'shared' | 'cancelled' | 'failed';
 export async function sharePieces(pieces: Piece[], taken?: number): Promise<ShareOutcome> {
   // A shared File with no timestamp of its own is filed under the moment it was
   // saved, so the capture date travels with it instead.
-  const files = pieces.map((p) =>
-    new File([p.blob], p.name, taken ? { type: p.type, lastModified: taken } : { type: p.type }),
+  const files = pieces.map(
+    (p) =>
+      new File([p.blob], p.name, taken ? { type: p.type, lastModified: taken } : { type: p.type })
   );
   try {
     await navigator.share({ files, title: '图切' });
@@ -79,7 +82,7 @@ export async function zipPieces(
   skip: number[],
   naming: Naming,
   format: Format,
-  quality: number,
+  quality: number
 ): Promise<Blob> {
   return fetchZip(id, axis, cuts, skip, naming, format, quality);
 }

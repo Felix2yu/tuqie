@@ -58,7 +58,7 @@ export function resolveCuts(
   threshold: number,
   removed: string[],
   manual: Cut[],
-  length: number,
+  length: number
 ): Cut[] {
   const gone = new Set(removed);
   const auto: Cut[] = [];
@@ -140,24 +140,29 @@ export function applyMove(
   length: number,
   manual: Cut[],
   removed: string[],
-  nextId: string,
+  nextId: string
 ): { manual: Cut[]; removed: string[] } | null {
   const index = cuts.findIndex((c) => c.id === id);
   if (index < 0) return null;
-  const next = clampCut(pos, cuts.map((c) => c.pos), index, length);
+  const next = clampCut(
+    pos,
+    cuts.map((c) => c.pos),
+    index,
+    length
+  );
   if (cuts[index].pos === next) return null;
   if (id.startsWith('m')) {
     return {
       manual: normalizeCuts(
         manual.map((m) => (m.id === id ? { ...m, pos: next } : m)),
-        length,
+        length
       ),
-      removed,
+      removed
     };
   }
   return {
     manual: normalizeCuts([...manual, { id: nextId, pos: next }], length),
-    removed: [...removed, id],
+    removed: [...removed, id]
   };
 }
 
@@ -181,7 +186,8 @@ export function stemOf(filename: string): string {
 export function sanitizePrefix(raw: string): string {
   const s = raw
     .trim()
-    .replace(/[\/\\:"\u0000-\u001f]/g, '_')
+    // eslint-disable-next-line no-control-regex -- 文件名清洗：按用途剔除 C0 控制字符（含 NUL），与服务端同一规则
+    .replace(/[/\\:"\u0000-\u001f]/g, '_')
     .replace(/^[. ]+|[. ]+$/g, '')
     .replace(/\.\./g, '_');
   const capped = Array.from(s).slice(0, 80).join('');
@@ -204,13 +210,19 @@ export function bandLabel(axis: Axis, width: number, height: number, band: Band)
   return axis === 'x' ? `${band.size}×${height}` : `${width}×${band.size}`;
 }
 
-const EXT: Record<Format, string> = { jpeg: 'jpg', png: 'png', heic: 'heic', avif: 'avif', jxl: 'jxl' };
+const EXT: Record<Format, string> = {
+  jpeg: 'jpg',
+  png: 'png',
+  heic: 'heic',
+  avif: 'avif',
+  jxl: 'jxl'
+};
 const MIME: Record<Format, string> = {
   jpeg: 'image/jpeg',
   png: 'image/png',
   heic: 'image/heic',
   avif: 'image/avif',
-  jxl: 'image/jxl',
+  jxl: 'image/jxl'
 };
 
 /** The extension the server names a slice with. */

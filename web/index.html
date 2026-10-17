@@ -2,12 +2,12 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, viewport-fit=cover"
-    />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#080b10" />
-    <meta name="description" content="把长截图拆分成多张独立照片，支持自动识别分割线和一键存入相册" />
+    <meta
+      name="description"
+      content="把长截图拆分成多张独立照片，支持自动识别分割线和一键存入相册"
+    />
     <link rel="manifest" href="/manifest.json" />
     <meta name="format-detection" content="telephone=no" />
     <!-- Legacy IE and old Edge only ever look for the .ico; give it a slot first so
@@ -42,7 +42,9 @@
           /* no storage: follow the system */
         }
         if (choice !== 'light' && choice !== 'dark') choice = 'auto';
-        var isDark = choice === 'dark' || (choice === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+        var isDark =
+          choice === 'dark' ||
+          (choice === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
       })();
     </script>
