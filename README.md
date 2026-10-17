@@ -270,3 +270,7 @@ codecov.yml      覆盖率闸门（规范统一，各仓库只改 paths）
 ```
 
 测试：`go test ./...`；前端类型检查与构建：`pnpm --dir web build`。
+
+## 许可证
+
+本项目以 [MIT](LICENSE) 发布，© 2026 Felix2yu。
