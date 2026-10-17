@@ -120,7 +120,8 @@ func (s *Server) handleAnalyze(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "上传失败：表单格式不正确")
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
+	// 临时文件清理失败不影响本次响应，错误无处安放
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
 
 	file, header, err := r.FormFile("file")
 	if err != nil {

@@ -39,8 +39,12 @@ func hugeGIFHeader(t *testing.T, w, h int) []byte {
 	t.Helper()
 	buf := &bytes.Buffer{}
 	buf.WriteString("GIF89a")
-	binary.Write(buf, binary.LittleEndian, uint16(w))
-	binary.Write(buf, binary.LittleEndian, uint16(h))
+	if err := binary.Write(buf, binary.LittleEndian, uint16(w)); err != nil {
+		t.Fatalf("write width: %v", err)
+	}
+	if err := binary.Write(buf, binary.LittleEndian, uint16(h)); err != nil {
+		t.Fatalf("write height: %v", err)
+	}
 	buf.WriteByte(0) // no global color table
 	buf.WriteByte(0) // background index
 	buf.WriteByte(0) // pixel aspect ratio
