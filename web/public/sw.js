@@ -15,14 +15,19 @@ const SHELL_FILES = [
   '/manifest.json',
   '/apple-touch-icon.png',
   '/icons/icon-192.png',
-  '/icons/icon-maskable-192.png',
+  '/icons/icon-maskable-192.png'
 ];
 
 // The probe below must reach the network rather than the copy this worker keeps.
 const REVISION_QUERY = 'sw-revision';
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(SHELL).then(precache).then(() => self.skipWaiting()));
+  event.waitUntil(
+    caches
+      .open(SHELL)
+      .then(precache)
+      .then(() => self.skipWaiting())
+  );
 });
 
 /**
@@ -43,7 +48,7 @@ async function precache(cache) {
       } catch {
         /* unreachable: leave the stored copy alone */
       }
-    }),
+    })
   );
 }
 
@@ -53,7 +58,7 @@ self.addEventListener('activate', (event) => {
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== SHELL).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
-      .then(syncFromServer),
+      .then(syncFromServer)
   );
 });
 
@@ -109,15 +114,22 @@ async function syncBuildFiles(html) {
       }
     }),
     ...stored
-      .filter((req) => new URL(req.url).pathname.startsWith('/assets/') && !used.has(new URL(req.url).pathname))
-      .map((req) => cache.delete(req)),
+      .filter(
+        (req) =>
+          new URL(req.url).pathname.startsWith('/assets/') && !used.has(new URL(req.url).pathname)
+      )
+      .map((req) => cache.delete(req))
   ]);
 }
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/')) {
+  if (
+    req.method !== 'GET' ||
+    url.origin !== self.location.origin ||
+    url.pathname.startsWith('/api/')
+  ) {
     return;
   }
   if (url.searchParams.has(REVISION_QUERY)) {
@@ -137,9 +149,7 @@ self.addEventListener('fetch', (event) => {
   // The build files carry their own identity in their names, so a stored copy
   // cannot be the wrong one and the network would only add a wait.
   if (url.pathname.startsWith('/assets/')) {
-    event.respondWith(
-      caches.match(req).then((hit) => hit || fetchAndStore(req, event)),
-    );
+    event.respondWith(caches.match(req).then((hit) => hit || fetchAndStore(req, event)));
     return;
   }
 

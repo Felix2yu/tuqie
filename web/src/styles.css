@@ -2,7 +2,7 @@
 
 /* Icons, sw.js and the manifest are shipped verbatim, not class-name sources:
    an SVG's transform="" attribute was being extracted as a .transform utility. */
-@source not "../public/**";
+@source not '../public/**';
 
 /* One palette per theme, and nothing else writes a colour down: utilities name a
    role (surface, edge, muted), a role reads a palette variable, and switching the
@@ -86,7 +86,8 @@ html[data-theme='light'] {
 }
 
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
 }
 
 html,

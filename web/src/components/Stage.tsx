@@ -28,7 +28,7 @@ export default function Stage({
   onMove,
   onCommit,
   onRemove,
-  onViewport,
+  onViewport
 }: Props) {
   const img = useRef<HTMLImageElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -61,7 +61,11 @@ export default function Stage({
     }
     // Fill mode scrolls along the long side: down for a tall screenshot,
     // sideways for a wide one.
-    setPageBox(across ? { w: Math.max(1, Math.round(ch * (natW / natH))), h: ch } : { w: cw, h: Math.max(1, Math.round(cw * (natH / natW))) });
+    setPageBox(
+      across
+        ? { w: Math.max(1, Math.round(ch * (natW / natH))), h: ch }
+        : { w: cw, h: Math.max(1, Math.round(cw * (natH / natW))) }
+    );
   }, [fit, across]);
 
   useEffect(() => {
@@ -97,7 +101,7 @@ export default function Stage({
       const ratio = (across ? clientX - rect.left : clientY - rect.top) / span;
       return Math.round(Math.min(Math.max(ratio, 0), 1) * length);
     },
-    [across, length],
+    [across, length]
   );
 
   const addAtCentre = () => {
@@ -147,7 +151,10 @@ export default function Stage({
     <div className={`relative min-h-0 flex-1 ${drag !== null ? 'no-select' : ''}`}>
       <div ref={scroller} className="thin-scroll h-full overflow-auto" onScroll={reportViewport}>
         <div className={fit === 'page' ? 'flex h-full items-center justify-center' : ''}>
-          <div className="relative" style={pageBox ? { width: pageBox.w, height: pageBox.h } : undefined}>
+          <div
+            className="relative"
+            style={pageBox ? { width: pageBox.w, height: pageBox.h } : undefined}
+          >
             <img
               ref={img}
               src={src}
@@ -169,7 +176,11 @@ export default function Stage({
                     ? 'grab absolute inset-y-0 -ml-[17px] w-[34px] cursor-ew-resize'
                     : 'grab absolute inset-x-0 -mt-[17px] h-[34px] cursor-ns-resize'
                 }
-                style={across ? { left: `${positionOf(cut.pos, length)}%` } : { top: `${positionOf(cut.pos, length)}%` }}
+                style={
+                  across
+                    ? { left: `${positionOf(cut.pos, length)}%` }
+                    : { top: `${positionOf(cut.pos, length)}%` }
+                }
                 onPointerDown={(e) => {
                   e.preventDefault();
                   capture(e);
@@ -201,7 +212,7 @@ export default function Stage({
                 />
                 <div
                   className={`scrim absolute flex items-center gap-1 ${
-                    across ? 'left-1/2 top-1 -translate-x-1/2' : 'left-1 top-1/2 -translate-y-1/2'
+                    across ? 'top-1 left-1/2 -translate-x-1/2' : 'top-1/2 left-1 -translate-y-1/2'
                   }`}
                 >
                   {edit?.id === cut.id ? (
@@ -218,7 +229,7 @@ export default function Stage({
                       }}
                       onPointerDown={(e) => e.stopPropagation()}
                       onFocus={(e) => e.target.select()}
-                      className="w-[64px] rounded bg-surface/95 px-1.5 py-0.5 text-[10px] tabular-nums text-accent outline outline-1 outline-accent"
+                      className="w-[64px] rounded bg-surface/95 px-1.5 py-0.5 text-[10px] text-accent tabular-nums outline outline-1 outline-accent"
                       aria-label={`第 ${i + 1} 条切割线的位置（像素）`}
                     />
                   ) : (
@@ -230,7 +241,7 @@ export default function Stage({
                         e.stopPropagation();
                         setEdit({ id: cut.id, text: String(cut.pos) });
                       }}
-                      className="rounded bg-surface/90 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-accent hover:bg-surface"
+                      className="rounded bg-surface/90 px-1.5 py-0.5 text-[10px] font-medium text-accent tabular-nums hover:bg-surface"
                     >
                       {i + 1} · {cut.pos}px
                     </button>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { humanBytes } from '../lib/size';
+import { useLatest } from '../lib/useLatest';
 import ThemeToggle from './ThemeToggle';
 
 type Props = {
@@ -20,7 +21,7 @@ const NOTES = [
   '竖排、横排的长图都会自动判方向，按拼接处的画面突变定位切割线，也可手动增删与拖动。',
   '手机照片自带的旋转标记会被读进来，切出来的就是你看到的那个方向。',
   'iPhone / iPad 用 Safari 打开，导出时选择「存储图像」即可批量存入相册。',
-  '手机拍的 HEIC 可以直接上传，不用先转成 JPEG。',
+  '手机拍的 HEIC 可以直接上传，不用先转成 JPEG。'
 ];
 
 /**
@@ -29,7 +30,13 @@ const NOTES = [
  */
 function namePasted(file: File): File | null {
   const ext =
-    file.type === 'image/jpeg' ? 'jpg' : file.type === 'image/gif' ? 'gif' : file.type === 'image/png' ? 'png' : '';
+    file.type === 'image/jpeg'
+      ? 'jpg'
+      : file.type === 'image/gif'
+        ? 'gif'
+        : file.type === 'image/png'
+          ? 'png'
+          : '';
   if (!ext) return null;
   if (/\.(png|jpe?g|gif)$/i.test(file.name)) return file;
   const stamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '');
@@ -39,12 +46,10 @@ function namePasted(file: File): File | null {
 export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Props) {
   const input = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
-  const send = useRef(onFile);
-  send.current = onFile;
+  const send = useLatest(onFile);
   // A drop or a click that lands while an upload is in flight would start a second
   // analyze, and whichever came back last would replace the picture in view.
-  const busyRef = useRef(busy);
-  busyRef.current = busy;
+  const busyRef = useLatest(busy);
 
   const pick = (files: FileList | null) => {
     if (busyRef.current) return;
@@ -71,17 +76,19 @@ export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Pr
     };
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [busy]);
+    // send 为稳定对象，列入依赖只为满足 exhaustive-deps，监听器不因此重建。
+  }, [busy, send]);
 
   // No answer from the server leaves the size out of the sentence rather than in it
   // with a number this instance may not use.
-  const sizeNote = maxUpload === null ? null : maxUpload === 0 ? '不限大小' : `最大 ${humanBytes(maxUpload)}`;
+  const sizeNote =
+    maxUpload === null ? null : maxUpload === 0 ? '不限大小' : `最大 ${humanBytes(maxUpload)}`;
 
   return (
     <div className="relative flex min-h-full flex-col">
       {/* The one control on this page that is not about the picture, so it stays
           out of the way of both the heading and the drop zone. */}
-      <div className="safe-top safe-right absolute right-0 top-0 z-10 p-3">
+      <div className="safe-top safe-right absolute top-0 right-0 z-10 p-3">
         <ThemeToggle />
       </div>
 
@@ -113,7 +120,9 @@ export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Pr
                 pick(e.dataTransfer.files);
               }}
               className={`flex flex-col justify-center rounded-2xl border border-dashed px-6 py-14 text-center transition lg:flex-1 lg:px-10 ${
-                over ? 'border-accent bg-accent-dim/20' : 'border-edge bg-surface hover:border-edge-hi'
+                over
+                  ? 'border-accent bg-accent-dim/20'
+                  : 'border-edge bg-surface hover:border-edge-hi'
               }`}
             >
               <div className="text-5xl leading-none text-accent lg:text-6xl">✂</div>
@@ -127,7 +136,11 @@ export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Pr
               </div>
             </button>
 
-            {offline && <p className="text-sm text-warn">现在离线：这页还开得起来，但识别与导出都在服务器，等网络回来再传。</p>}
+            {offline && (
+              <p className="text-sm text-warn">
+                现在离线：这页还开得起来，但识别与导出都在服务器，等网络回来再传。
+              </p>
+            )}
 
             {busy && (
               <div className="h-1 w-40 overflow-hidden rounded-full bg-sunken">
@@ -139,7 +152,10 @@ export default function Dropzone({ busy, error, offline, maxUpload, onFile }: Pr
 
           <ul className="grid gap-1 text-center text-xs text-muted lg:gap-3 lg:text-left">
             {NOTES.map((note) => (
-              <li key={note} className="lg:rounded-xl lg:border lg:border-line lg:bg-surface lg:px-4 lg:py-3">
+              <li
+                key={note}
+                className="lg:rounded-xl lg:border lg:border-line lg:bg-surface lg:px-4 lg:py-3"
+              >
                 {note}
               </li>
             ))}

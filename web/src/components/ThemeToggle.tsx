@@ -3,7 +3,7 @@ import { setChoice, useTheme, type ThemeChoice } from '../lib/theme';
 const CHOICES: { id: ThemeChoice; label: string; hint: string }[] = [
   { id: 'auto', label: '自动', hint: '跟随系统的亮暗设置' },
   { id: 'light', label: '亮', hint: '一直用亮色' },
-  { id: 'dark', label: '暗', hint: '一直用暗色' },
+  { id: 'dark', label: '暗', hint: '一直用暗色' }
 ];
 
 export default function ThemeToggle() {

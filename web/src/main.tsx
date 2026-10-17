@@ -6,7 +6,7 @@ import './styles.css';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <App />
-  </StrictMode>,
+  </StrictMode>
 );
 
 // Only the built app is installed as a service worker: under the dev server the
@@ -19,7 +19,9 @@ if (import.meta.env.PROD) {
     // failing in silence. Without a worker there is no install and no offline,
     // and nothing on screen says which of the two the visitor is missing.
     if (!('serviceWorker' in navigator)) {
-      console.warn('图切：这个页面拿不到 service worker（不是 HTTPS 也不是 localhost，无痕窗口同样会关掉），所以装不到主屏幕，也没有离线。');
+      console.warn(
+        '图切：这个页面拿不到 service worker（不是 HTTPS 也不是 localhost，无痕窗口同样会关掉），所以装不到主屏幕，也没有离线。'
+      );
       return;
     }
     navigator.serviceWorker.register('/sw.js').catch((err) => {
