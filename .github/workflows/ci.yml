@@ -38,6 +38,9 @@ jobs:
       # 直接顶爆 detect_test 里 3s 的计时预算（单开 -race 是 0.4s 级、通过）。
       # 走默认的 -covermode=atomic：插桩后整包 4.2s，计时断言有余量。
       web-dir: web
+      # lint 纳入 CI：本仓 `pnpm run lint` 已本地实测绿（prettier --check + eslint）。
+      # 只有构建侧被验证过是不够的 —— typescript-eslint 对 TS 7 是加载期硬失败。
+      web-lint-command: pnpm run lint
       codecov-disable-search: true
 
   image:
