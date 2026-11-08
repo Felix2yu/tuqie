@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/gen2brain/avif v0.6.0
-	github.com/gen2brain/h265 v0.2.3
+	github.com/gen2brain/h265 v0.2.4
 	github.com/gen2brain/jxl v0.2.0
 )
 
